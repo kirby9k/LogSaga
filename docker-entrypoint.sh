@@ -22,6 +22,12 @@ chown -R "$PUID:$PGID" /config
 cd /app
 gosu "$PUID:$PGID" alembic upgrade head
 
+# If arguments were passed (e.g. "logsaga backfill"), run them instead of
+# starting the server. This allows one-off CLI commands via docker run.
+if [ "$#" -gt 0 ]; then
+    exec gosu "$PUID:$PGID" "$@"
+fi
+
 # Hand off to uvicorn
 # --workers 1: the app holds in-memory state and background tasks; multiple
 #   workers would cause duplicate observations and split caches
