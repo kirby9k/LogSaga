@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>logsaga</Name>
-  <Repository>logsaga</Repository>
+  <Repository>ghcr.io/kirby9k/logsaga:latest</Repository>
   <Registry/>
   <Network>bridge</Network>
   <MyIP/>
