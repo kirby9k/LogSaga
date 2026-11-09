@@ -1,5 +1,5 @@
 # ── Stage 1: build frontend ───────────────────────────────────────────────
-FROM node:22-slim AS node-build
+FROM node:24-slim AS node-build
 
 WORKDIR /build
 
