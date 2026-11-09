@@ -1,0 +1,44 @@
+# Git
+.git/
+.github/
+
+# Secrets / local config
+.env
+*.env
+notes/
+CLAUDE.md
+tasks.md
+
+# Python build artifacts
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.py[cod]
+backend/.ruff_cache/
+backend/.pytest_cache/
+backend/htmlcov/
+backend/.coverage
+
+# Frontend build artifacts (rebuilt in Docker)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Backend compiled frontend (rebuilt in Docker)
+backend/dist/
+
+# SQLite databases and artwork cache
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
+backend/logsaga/artwork/cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo

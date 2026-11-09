@@ -1,16 +1,17 @@
 # ── Stage 1: build frontend ───────────────────────────────────────────────
 FROM node:24-slim AS node-build
 
-WORKDIR /build
+WORKDIR /build/frontend
 
-# Install dependencies first (cached unless package-lock.json changes)
-COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN npm ci --prefix frontend
+# Install dependencies first (cached unless package.json / lockfile / .npmrc changes)
+# .npmrc must be present here — it sets legacy-peer-deps=true for npm ci
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+RUN npm ci
 
 # Copy source and build
-COPY frontend/ ./frontend/
-# vite.config.ts writes to outDir: '../backend/dist', which resolves to /build/backend/dist/
-RUN mkdir -p backend && npm run build --prefix frontend
+# vite.config.ts: outDir = '../backend/dist' → /build/backend/dist/
+COPY frontend/ ./
+RUN npm run build
 
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────
