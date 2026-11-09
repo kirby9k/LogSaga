@@ -1,0 +1,74 @@
+# Secrets / environment
+.env
+*.env
+notes/my-environment.md
+
+# Private / local-only development files (not for public repo)
+CLAUDE.md
+tasks.md
+notes/
+.private/
+
+# Debug scripts
+backend/check_item.py
+backend/test_out.txt
+
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm
+
+# Artwork cache
+backend/logsaga/artwork/cache/
+/config/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+# uv.lock is intentionally committed — it pins dependency versions for reproducible builds
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# Docker local overrides
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/

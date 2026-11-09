@@ -1,0 +1,26 @@
+# Ensure shell scripts always use LF in the repo and in the Docker build context
+# (CRLF in a sh script breaks the #!/bin/sh shebang line inside Linux containers)
+*.sh text eol=lf
+
+# Standard text files — let git use the platform default
+*.md text
+*.txt text
+*.py text
+*.ts text
+*.tsx text
+*.json text
+*.toml text
+*.yml text
+*.yaml text
+*.xml text
+*.ini text
+*.css text
+*.html text
+
+# Binary — never munge line endings
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary

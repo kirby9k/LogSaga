@@ -1,0 +1,53 @@
+services:
+  logsaga:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logsaga
+    restart: unless-stopped
+
+    ports:
+      - "8790:8790"
+
+    volumes:
+      # Persistent data: SQLite DB + artwork cache
+      - ./data:/config
+
+    environment:
+      # ── Kodi MariaDB connection (read-only account) ───────────────────────
+      KODI_DB_HOST: ${KODI_DB_HOST}
+      KODI_DB_PORT: ${KODI_DB_PORT:-3306}
+      KODI_DB_USER: ${KODI_DB_USER:-logsaga}
+      KODI_DB_PASSWORD: ${KODI_DB_PASSWORD}
+
+      # ── Kodi JSON-RPC (Kodi-Headless, used for artwork) ──────────────────
+      KODI_JSONRPC_URL: ${KODI_JSONRPC_URL}
+
+      # ── Poll interval ─────────────────────────────────────────────────────
+      POLL_SECONDS: ${POLL_SECONDS:-30}
+
+      # ── Timezone ──────────────────────────────────────────────────────────
+      TZ: ${TZ:-America/Los_Angeles}
+
+      # ── MQTT (leave unset to disable) ─────────────────────────────────────
+      # MQTT_HOST: ${MQTT_HOST}
+      # MQTT_PORT: ${MQTT_PORT:-1883}
+      # MQTT_USER: ${MQTT_USER}
+      # MQTT_PASSWORD: ${MQTT_PASSWORD}
+
+      # ── App ───────────────────────────────────────────────────────────────
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8790}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # ── PUID/PGID (Unraid default: nobody/users = 99:100) ─────────────────
+      PUID: ${PUID:-99}
+      PGID: ${PGID:-100}
+
+    healthcheck:
+      test: >
+        python -c "import urllib.request;
+        urllib.request.urlopen('http://localhost:8790/api/health')"
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3

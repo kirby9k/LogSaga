@@ -1,0 +1,238 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>logsaga</Name>
+  <Repository>logsaga</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>Self-hosted Kodi watch history dashboard. Polls Kodi&#39;s shared MariaDB library, records every play (finished or not), caches metadata and artwork locally, and serves a web dashboard. No writes to your Kodi database.</Overview>
+  <Category>MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:8790]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Self-hosted Kodi watch history dashboard.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8790</HostPort>
+        <ContainerPort>8790</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/logsaga</HostDir>
+      <ContainerDir>/config</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+
+    <!-- ── Kodi MariaDB connection (read-only account) ───────────────────── -->
+    <Variable>
+      <Value/>
+      <Name>KODI_DB_HOST</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Hostname or IP of the MariaDB server hosting Kodi&#39;s database.</Description>
+    </Variable>
+    <Variable>
+      <Value>3306</Value>
+      <Name>KODI_DB_PORT</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>MariaDB port (default: 3306).</Description>
+    </Variable>
+    <Variable>
+      <Value>logsaga</Value>
+      <Name>KODI_DB_USER</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>MariaDB user with SELECT-only access on MyVideos%. See docs/setup.md.</Description>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>KODI_DB_PASSWORD</Name>
+      <Mode/>
+      <Mask>true</Mask>
+      <Description>Password for the logsaga MariaDB user.</Description>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>KODI_DB_NAME</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Optional: pin to a specific Kodi DB name (e.g. MyVideos131). Leave blank to auto-detect the highest MyVideos% database.</Description>
+    </Variable>
+
+    <!-- ── Kodi JSON-RPC ──────────────────────────────────────────────────── -->
+    <Variable>
+      <Value/>
+      <Name>KODI_JSONRPC_URL</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>JSON-RPC URL of your Kodi-Headless instance (e.g. http://YOUR_KODI_HEADLESS_IP:8086/jsonrpc). Used for artwork PrepareDownload.</Description>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>KODI_JSONRPC_USER</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Kodi JSON-RPC username (leave blank if no auth).</Description>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>KODI_JSONRPC_PASSWORD</Name>
+      <Mode/>
+      <Mask>true</Mask>
+      <Description>Kodi JSON-RPC password (leave blank if no auth).</Description>
+    </Variable>
+
+    <!-- ── Polling ────────────────────────────────────────────────────────── -->
+    <Variable>
+      <Value>30</Value>
+      <Name>POLL_SECONDS</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>How often (seconds) to poll Kodi&#39;s database for changes. Default: 30.</Description>
+    </Variable>
+    <Variable>
+      <Value>2.0</Value>
+      <Name>LIBRARY_SYNC_HOURS</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>How often (hours) to run a full library sync to pick up new/removed items. Default: 2.0.</Description>
+    </Variable>
+
+    <!-- ── Timezone ───────────────────────────────────────────────────────── -->
+    <Variable>
+      <Value>America/Los_Angeles</Value>
+      <Name>TZ</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Timezone matching your Kodi clients (Kodi writes lastPlayed in client local time). Example: America/Los_Angeles, Europe/London.</Description>
+    </Variable>
+
+    <!-- ── MQTT (Home Assistant discovery) ───────────────────────────────── -->
+    <Variable>
+      <Value/>
+      <Name>MQTT_HOST</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Hostname or IP of your MQTT broker (e.g. Mosquitto). Leave blank to disable HA discovery.</Description>
+    </Variable>
+    <Variable>
+      <Value>1883</Value>
+      <Name>MQTT_PORT</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>MQTT broker port (default: 1883).</Description>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>MQTT_USER</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>MQTT username (leave blank if no auth).</Description>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>MQTT_PASSWORD</Name>
+      <Mode/>
+      <Mask>true</Mask>
+      <Description>MQTT password (leave blank if no auth).</Description>
+    </Variable>
+    <Variable>
+      <Value>homeassistant</Value>
+      <Name>MQTT_DISCOVERY_PREFIX</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>MQTT discovery prefix (default: homeassistant).</Description>
+    </Variable>
+
+    <!-- ── App ────────────────────────────────────────────────────────────── -->
+    <Variable>
+      <Value>http://localhost:8790</Value>
+      <Name>PUBLIC_BASE_URL</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Public base URL for this app (used in HA sensor URLs). Example: http://YOUR_SERVER_IP:8790.</Description>
+    </Variable>
+    <Variable>
+      <Value>INFO</Value>
+      <Name>LOG_LEVEL</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Log level: DEBUG, INFO, WARNING, ERROR. Default: INFO.</Description>
+    </Variable>
+
+    <!-- ── PUID / PGID (Unraid: nobody/users = 99:100) ───────────────────── -->
+    <Variable>
+      <Value>99</Value>
+      <Name>PUID</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>User ID the app runs as. Unraid default: 99 (nobody).</Description>
+    </Variable>
+    <Variable>
+      <Value>100</Value>
+      <Name>PGID</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Group ID the app runs as. Unraid default: 100 (users).</Description>
+    </Variable>
+
+    <!-- ── Session rules ─────────────────────────────────────────────────── -->
+    <Variable>
+      <Value>120</Value>
+      <Name>MIN_STARTED_SECONDS</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Minimum playback position (seconds) before a partial session is kept. Below this it is marked ignored. Default: 120.</Description>
+    </Variable>
+    <Variable>
+      <Value>6</Value>
+      <Name>SESSION_GAP_HOURS</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Activity gap (hours) that merges into the same session. Default: 6.</Description>
+    </Variable>
+    <Variable>
+      <Value>90</Value>
+      <Name>WATCHED_PERCENT</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Percentage of runtime that counts as watched. Default: 90.</Description>
+    </Variable>
+    <Variable>
+      <Value>8</Value>
+      <Name>WATCHED_REMAINING_MINUTES_MOVIE</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Minutes remaining in a movie that counts as watched (credits window). Default: 8.</Description>
+    </Variable>
+    <Variable>
+      <Value>3</Value>
+      <Name>WATCHED_REMAINING_MINUTES_EPISODE</Name>
+      <Mode/>
+      <Mask>false</Mask>
+      <Description>Minutes remaining in an episode that counts as watched (credits window). Default: 3.</Description>
+    </Variable>
+
+  </Environment>
+  <Labels/>
+  <Config Name="Web UI" Target="8790" Default="8790" Mode="tcp" Description="LogSAGA web dashboard" Type="Port" Display="always" Required="true" Mask="false">8790</Config>
+  <Config Name="AppData" Target="/config" Default="/mnt/user/appdata/logsaga" Mode="rw" Description="Persistent data: SQLite database and artwork cache" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/logsaga</Config>
+</Container>
