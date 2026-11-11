@@ -44,6 +44,10 @@ RUN uv sync --no-dev --frozen
 # main.py resolves dist as Path(__file__).parent.parent / "dist" = /app/dist/
 COPY --from=node-build /build/backend/dist/ ./dist/
 
+# ── Build version (injected by GitHub Actions as --build-arg) ─────────────
+ARG BUILD_VERSION=dev
+ENV BUILD_VERSION=${BUILD_VERSION}
+
 # ── Runtime environment defaults ─────────────────────────────────────────
 ENV PATH="/app/.venv/bin:$PATH" \
     LOGSAGA_DB_PATH="/config/logsaga.db" \

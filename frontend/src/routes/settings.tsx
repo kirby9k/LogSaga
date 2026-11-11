@@ -104,6 +104,9 @@ function SettingsPage() {
                   {health.status}
                 </Badge>
               </Row>
+              <Row label="Version">
+                <span className="font-mono text-xs">{health.version}</span>
+              </Row>
               {health.kodi_db_name && (
                 <Row label="Kodi DB"><span className="font-mono text-xs">{health.kodi_db_name}</span></Row>
               )}

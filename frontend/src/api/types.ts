@@ -403,6 +403,7 @@ export interface components {
 
     HealthOut: {
       status: string;
+      version: string;
       kodi_db_name?: string | null;
       last_poll_at?: string | null;
       last_success_at?: string | null;

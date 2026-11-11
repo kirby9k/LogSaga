@@ -39,6 +39,13 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Set build version
+        id: build_version
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          BUILD_DATE=$(date -u +%Y.%m.%d)
+          echo "value=${BUILD_DATE}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -46,5 +53,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ steps.build_version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

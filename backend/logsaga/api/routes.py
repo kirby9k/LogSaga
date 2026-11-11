@@ -134,7 +134,7 @@ def get_health(
     })
 
     if sync is None:
-        return HealthOut(status="error", settings=settings_dict)
+        return HealthOut(status="error", version=cfg.build_version, settings=settings_dict)
 
     # Determine health status
     stale_threshold = max(cfg.poll_seconds * 2, 300)  # at least 5 minutes
@@ -146,6 +146,7 @@ def get_health(
 
     return HealthOut(
         status=status,
+        version=cfg.build_version,
         kodi_db_name=sync.kodi_db_name,
         last_poll_at=sync.last_poll_at,
         last_success_at=sync.last_success_at,

@@ -338,6 +338,7 @@ class JobStateOut(BaseModel):
 # ---------------------------------------------------------------------------
 class HealthOut(BaseModel):
     status: str         # "ok" | "degraded" | "error"
+    version: str = "dev"
     kodi_db_name: Optional[str] = None
     last_poll_at: Optional[UTCDatetime] = None
     last_success_at: Optional[UTCDatetime] = None

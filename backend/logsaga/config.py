@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     # --- App ---
     public_base_url: str = "http://localhost:8790"
     log_level: str = "INFO"
+    build_version: str = "dev"  # set at build time via BUILD_VERSION env/ARG
     # SQLite database path (bare file path, not a URL)
     logsaga_db_path: str = "logsaga.db"
 
