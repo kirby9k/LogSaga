@@ -195,6 +195,7 @@ export interface components {
       media_type: string;
       title: string;
       show_title?: string | null;
+      show_id?: number | null;
       season?: number | null;
       episode?: number | null;
       year?: number | null;

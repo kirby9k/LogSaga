@@ -134,7 +134,18 @@ function RecentlyPlayed() {
                       <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">
                         {item.show_title ? (
                           <>
-                            <span className="text-muted-foreground block truncate">{item.show_title}</span>
+                            {item.show_id ? (
+                              <Link
+                                to="/shows/$showId"
+                                params={{ showId: String(item.show_id) }}
+                                className="text-muted-foreground block truncate hover:text-foreground"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                {item.show_title}
+                              </Link>
+                            ) : (
+                              <span className="text-muted-foreground block truncate">{item.show_title}</span>
+                            )}
                             {item.season != null && item.episode != null
                               ? `${formatEpisode(item.season, item.episode)} · ${item.title}`
                               : item.title}

@@ -78,6 +78,7 @@ class MediaItemSummaryOut(_Base):
     media_type: str
     title: str
     show_title: Optional[str] = None
+    show_id: Optional[int] = None
     season: Optional[int] = None
     episode: Optional[int] = None
     year: Optional[int] = None

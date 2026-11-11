@@ -34,6 +34,7 @@ from logsaga.kodi.db import (
 from logsaga.models import (
     KodiFileState,
     KodiObservation,
+    KodiShow,
     KodiState,
     MediaItem,
     MediaType,
@@ -125,6 +126,16 @@ def _upsert_media_item(
     )
     db.add(item)
     db.flush()  # get the id assigned
+
+    # For episodes: link to KodiShow immediately so show navigation works
+    # without waiting for the next full library sync (which runs every 2 h).
+    # Library sync already has the correct show_id_map; this covers the gap
+    # when a new episode is first detected by polling before library sync fires.
+    if identity.media_type == "episode" and identity.show_title:
+        show = db.query(KodiShow).filter(KodiShow.title == identity.show_title).first()
+        if show:
+            item.show_id = show.id
+
     return item
 
 

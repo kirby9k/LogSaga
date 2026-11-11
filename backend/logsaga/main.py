@@ -111,7 +111,7 @@ def _ensure_kodi_conn(state: _KodiState, cfg) -> bool:
     return True
 
 
-def _run_poll_cycle(engine, conn, cfg) -> int:
+def _run_poll_cycle(engine, conn, cfg) -> tuple[int, list[int]]:
     """
     Run one full poll cycle (sync — called via asyncio.to_thread).
 
@@ -120,7 +120,8 @@ def _run_poll_cycle(engine, conn, cfg) -> int:
     3. Close timed-out sessions
     4. Commit
 
-    Returns the number of new observations generated.
+    Returns (obs_count, new_item_ids) where new_item_ids are MediaItem IDs
+    created for the first time during this cycle (need artwork fetch).
     """
     from logsaga.observe.poller import poll_once
     from logsaga.sessions.builder import build_incremental
@@ -129,6 +130,9 @@ def _run_poll_cycle(engine, conn, cfg) -> int:
 
     SessionLocal = sessionmaker(bind=engine)
     with SessionLocal() as db:
+        # Record the cycle start time so we can find items created in this cycle.
+        cycle_start = _now_utc()
+
         try:
             observations = poll_once(conn, db, cfg)
         except Exception as exc:
@@ -141,7 +145,7 @@ def _run_poll_cycle(engine, conn, cfg) -> int:
                 db.commit()
             except Exception:
                 pass  # If we can't record the error, just move on
-            return 0
+            return 0, []
 
         if observations:
             # Group by item, build incremental sessions
@@ -158,7 +162,17 @@ def _run_poll_cycle(engine, conn, cfg) -> int:
         _close_stale_sessions(db, cfg)
         db.commit()
 
-    return len(observations) if observations else 0
+        # Identify any MediaItem rows created during this cycle so the caller
+        # can schedule artwork fetching for them without waiting for the next
+        # library sync (which runs every 2 h by default).
+        new_item_ids: list[int] = []
+        if observations:
+            new_rows = db.query(MediaItem.id).filter(
+                MediaItem.created_at >= cycle_start
+            ).all()
+            new_item_ids = [r[0] for r in new_rows]
+
+    return len(observations) if observations else 0, new_item_ids
 
 
 def _close_stale_sessions(db: Session, cfg) -> None:
@@ -215,12 +229,14 @@ def _record_error(db: Session, error: str) -> None:
 # ---------------------------------------------------------------------------
 # Background tasks
 # ---------------------------------------------------------------------------
-def _run_library_sync(engine, conn, cfg) -> None:
+def _run_library_sync(engine, conn, cfg) -> bool:
     """
     Run one full library sync (sync — called via asyncio.to_thread).
 
     Fetches all movies/episodes/shows from Kodi and upserts them in the local DB.
     Never touches kodi_observation or watch_session.
+
+    Returns True if any new items were created (caller should trigger artwork fetch).
     """
     from logsaga.library.sync import sync_library
 
@@ -234,12 +250,131 @@ def _run_library_sync(engine, conn, cfg) -> None:
                 updated=result.total_updated,
                 removed=result.total_removed,
             )
+            return result.total_new > 0
         except Exception as exc:
             logger.error("library_sync_failed", error=str(exc))
             try:
                 db.rollback()
             except Exception:
                 pass
+            return False
+
+
+async def _fetch_artwork_for_items_bg(app: FastAPI, item_ids: list[int]) -> None:
+    """
+    Fire-and-forget: fetch artwork for specific MediaItem IDs.
+
+    Called when the poll loop creates new MediaItem rows so that artwork is
+    available immediately rather than waiting for the next library sync.
+    Opens its own short-lived Kodi connection; uses per-item commits so the
+    SQLite write lock is never held across network I/O.
+    """
+    if not item_ids:
+        return
+
+    cfg = app.state.settings
+    engine = app.state.engine
+
+    def _sync() -> int:
+        from logsaga.artwork.cache import fetch_artwork_for_item
+        from logsaga.kodi.db import connect, detect_db_name
+        from logsaga.kodi.jsonrpc import KodiJSONRPC
+
+        SessionLocal = sessionmaker(bind=engine, autoflush=False)
+        db_name = detect_db_name(cfg)
+        conn = connect(cfg, db_name=db_name)
+        rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
+        total = 0
+        try:
+            for iid in item_ids:
+                with SessionLocal() as db:
+                    item = db.get(MediaItem, iid)
+                    if item is None:
+                        continue
+                    count = fetch_artwork_for_item(item, conn, rpc, db, cfg)
+                    db.commit()
+                    total += count
+        finally:
+            conn.close()
+            if rpc:
+                rpc.close()
+        return total
+
+    try:
+        updated = await asyncio.to_thread(_sync)
+        logger.info("auto_artwork_new_items", items=len(item_ids), artwork_rows=updated)
+    except Exception as exc:
+        logger.error("auto_artwork_new_items_failed", error=str(exc))
+
+
+async def _fill_missing_artwork_bg(app: FastAPI) -> None:
+    """
+    Fire-and-forget: fetch artwork for all items that have no downloaded artwork.
+
+    Runs after library sync when new items are found.  Uses a subquery to skip
+    items that already have at least one Artwork row with a local_path so this
+    is a cheap no-op once artwork is fully populated.
+    Opens its own Kodi connection only when there is actual work to do.
+    """
+    cfg = app.state.settings
+    engine = app.state.engine
+
+    def _sync() -> int:
+        from logsaga.artwork.cache import fetch_artwork_for_item
+        from logsaga.kodi.db import connect, detect_db_name
+        from logsaga.kodi.jsonrpc import KodiJSONRPC
+        from logsaga.models import Artwork as _Artwork
+
+        SessionLocal = sessionmaker(bind=engine, autoflush=False)
+
+        # Quick DB-only pass: find items with no downloaded artwork.
+        with SessionLocal() as db:
+            has_art_sq = (
+                db.query(_Artwork.media_item_id)
+                .filter(_Artwork.local_path.isnot(None))
+                .distinct()
+                .subquery()
+            )
+            item_ids = [
+                r[0] for r in
+                db.query(MediaItem.id)
+                .filter(
+                    MediaItem.kodi_media_id.isnot(None),
+                    ~MediaItem.id.in_(has_art_sq),
+                )
+                .all()
+            ]
+
+        if not item_ids:
+            return 0  # Nothing to do — skip opening a Kodi connection.
+
+        logger.info("auto_artwork_fill_start", items_without_art=len(item_ids))
+
+        db_name = detect_db_name(cfg)
+        conn = connect(cfg, db_name=db_name)
+        rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
+        total = 0
+        try:
+            for iid in item_ids:
+                with SessionLocal() as db:
+                    item = db.get(MediaItem, iid)
+                    if item is None:
+                        continue
+                    count = fetch_artwork_for_item(item, conn, rpc, db, cfg)
+                    db.commit()
+                    total += count
+        finally:
+            conn.close()
+            if rpc:
+                rpc.close()
+        return total
+
+    try:
+        updated = await asyncio.to_thread(_sync)
+        if updated:
+            logger.info("auto_artwork_fill_done", artwork_rows=updated)
+    except Exception as exc:
+        logger.error("auto_artwork_fill_failed", error=str(exc))
 
 
 async def _library_sync_loop(app: FastAPI) -> None:
@@ -259,7 +394,13 @@ async def _library_sync_loop(app: FastAPI) -> None:
         try:
             connected = await asyncio.to_thread(_ensure_kodi_conn, kodi, cfg)
             if connected:
-                await asyncio.to_thread(_run_library_sync, app.state.engine, kodi.conn, cfg)
+                has_new = await asyncio.to_thread(
+                    _run_library_sync, app.state.engine, kodi.conn, cfg
+                )
+                # If new items were added, fill artwork for any items that
+                # don't have it yet. Fire-and-forget; runs in background.
+                if has_new:
+                    asyncio.create_task(_fill_missing_artwork_bg(app))
             else:
                 logger.warning("library_sync_skipped_no_kodi_conn")
         except asyncio.CancelledError:
@@ -301,11 +442,15 @@ async def _poll_loop(app: FastAPI) -> None:
                 continue
 
             backoff = cfg.poll_seconds  # reset on success
-            new_obs = await asyncio.to_thread(
+            new_obs, new_item_ids = await asyncio.to_thread(
                 _run_poll_cycle, app.state.engine, kodi.conn, cfg
             )
             if new_obs > 0:
                 logger.info("poll_cycle_complete", new_observations=new_obs)
+            # Newly created items have no artwork yet — fetch it immediately
+            # rather than waiting up to 2 h for the next library sync cycle.
+            if new_item_ids:
+                asyncio.create_task(_fetch_artwork_for_items_bg(app, new_item_ids))
         except asyncio.CancelledError:
             break
         except Exception as exc:

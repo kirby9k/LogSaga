@@ -94,6 +94,7 @@ def _item_summary(item: MediaItem) -> MediaItemSummaryOut:
         media_type=item.media_type,
         title=item.title,
         show_title=item.show_title,
+        show_id=item.show_id,
         season=item.season,
         episode=item.episode,
         year=item.year,
