@@ -31,6 +31,7 @@ from sqlalchemy.orm import sessionmaker
 
 from logsaga.config import Settings
 from logsaga.models import (
+    Artwork,
     KodiState,
     MediaItem,
     SessionStatus,
@@ -198,13 +199,55 @@ async def publish_discovery(client: Any, cfg: Settings) -> None:
     logger.info("MQTT discovery published for %d entities", len(entities))
 
 
-def _build_state(engine: Engine) -> dict[str, Any]:
+def _utc_iso(dt: Optional[datetime]) -> Optional[str]:
+    """Return an ISO 8601 string with explicit Z suffix (UTC) or None."""
+    if dt is None:
+        return None
+    return dt.isoformat() + "Z"
+
+
+def _item_art_urls(db: Any, item_id: int, base_url: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Return (poster_url, fanart_url) for a MediaItem, using local paths from
+    the Artwork table and PUBLIC_BASE_URL to build absolute URLs.
+
+    Poster preference: season.poster > tvshow.poster > poster
+    Fanart preference: tvshow.fanart > fanart
+    Returns (None, None) if no artwork has been downloaded.
+    """
+    art_rows = db.query(Artwork).filter(Artwork.media_item_id == item_id).all()
+    poster_pref = ["season.poster", "tvshow.poster", "poster"]
+    fanart_pref = ["tvshow.fanart", "fanart"]
+
+    art_by_type: dict[str, str] = {
+        a.art_type: a.local_path
+        for a in art_rows
+        if a.local_path
+    }
+
+    poster_url = None
+    for t in poster_pref:
+        if t in art_by_type:
+            poster_url = f"{base_url}/art/{art_by_type[t]}"
+            break
+
+    fanart_url = None
+    for t in fanart_pref:
+        if t in art_by_type:
+            fanart_url = f"{base_url}/art/{art_by_type[t]}"
+            break
+
+    return poster_url, fanart_url
+
+
+def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
     """
     Read current state from DB and return a dict of entity states.
 
     Called from the background task; runs synchronously in a thread.
     """
     SessionLocal = sessionmaker(bind=engine)
+    base_url = cfg.public_base_url.rstrip("/")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
@@ -225,13 +268,17 @@ def _build_state(engine: Engine) -> dict[str, Any]:
             if mi.show_title:
                 ep = f"S{mi.season:02d}E{mi.episode:02d}" if mi.season and mi.episode else ""
                 label = f"{mi.show_title} {ep} \"{mi.title}\"".strip()
+            poster_url, fanart_url = _item_art_urls(db, mi.id, base_url)
             last_watched = {
                 "state": label,
                 "type": mi.media_type,
                 "show": mi.show_title,
                 "season": mi.season,
                 "episode": mi.episode,
-                "completed_at": ws.completed_at.isoformat() if ws.completed_at else None,
+                "completed_at": _utc_iso(ws.completed_at),
+                "plot": mi.plot,
+                "poster_url": poster_url,
+                "fanart_url": fanart_url,
             }
 
         # Last started (most recent session any status)
@@ -249,10 +296,13 @@ def _build_state(engine: Engine) -> dict[str, Any]:
             if mi.show_title:
                 ep = f"S{mi.season:02d}E{mi.episode:02d}" if mi.season and mi.episode else ""
                 label = f"{mi.show_title} {ep} \"{mi.title}\"".strip()
+            poster_url, fanart_url = _item_art_urls(db, mi.id, base_url)
             last_started = {
                 "state": label,
                 "status": ws.status,
-                "last_activity_at": ws.last_activity_at.isoformat(),
+                "last_activity_at": _utc_iso(ws.last_activity_at),
+                "poster_url": poster_url,
+                "fanart_url": fanart_url,
             }
 
         # Recent (last 10 non-ignored sessions)
@@ -275,7 +325,7 @@ def _build_state(engine: Engine) -> dict[str, Any]:
                 "title": mi.title,
                 "show": mi.show_title,
                 "status": ws.status,
-                "last_activity_at": ws.last_activity_at.isoformat(),
+                "last_activity_at": _utc_iso(ws.last_activity_at),
             })
 
         # In-progress
@@ -348,7 +398,7 @@ async def publish_state(client: Any, cfg: Settings, engine: Engine) -> None:
     """
     import asyncio
 
-    state = await asyncio.to_thread(_build_state, engine)
+    state = await asyncio.to_thread(_build_state, engine, cfg)
     t_base = _STATE_BASE
     b_base = _BINARY_BASE
     name_map = {
