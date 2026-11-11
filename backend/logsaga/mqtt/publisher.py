@@ -5,13 +5,14 @@ Publishes MQTT discovery configs and state updates so Home Assistant
 auto-creates sensors without any YAML configuration.
 
 Entities published:
-  sensor.logsaga_last_watched    — most recent completed session
-  sensor.logsaga_last_started    — most recent session of any status
-  sensor.logsaga_recent          — count + last 10 sessions as attrs
-  sensor.logsaga_in_progress     — count of in_progress items
-  sensor.logsaga_watched_today   — completed sessions today (count + minutes)
-  sensor.logsaga_watched_this_week — completed sessions this week
-  binary_sensor.logsaga_sync_ok  — True when last sync was recent
+  sensor.logsaga_now_playing       — currently playing title (open session < 5 min old)
+  sensor.logsaga_last_watched      — most recent completed session
+  sensor.logsaga_last_started      — most recent session of any status
+  sensor.logsaga_recent            — count + last 10 sessions with poster_url as attrs
+  sensor.logsaga_in_progress       — count of in_progress items + poster/percent attrs
+  sensor.logsaga_watched_today     — minutes + count + item list for today
+  sensor.logsaga_watched_this_week — minutes + count + item list for this week
+  binary_sensor.logsaga_sync_ok    — True when last sync was recent
 
 All is a no-op if cfg.mqtt_enabled is False.
 
@@ -132,6 +133,15 @@ async def publish_discovery(client: Any, cfg: Settings) -> None:
     """
     entities = [
         (
+            _sensor_topics(cfg, "logsaga_now_playing")["config"],
+            _sensor_config(
+                cfg, "logsaga_now_playing", "LogSAGA Now Playing",
+                icon="mdi:play-circle-outline",
+                json_attrs=True,
+                value_template="{{ value_json.state }}",
+            ),
+        ),
+        (
             _sensor_topics(cfg, "logsaga_last_watched")["config"],
             _sensor_config(
                 cfg, "logsaga_last_watched", "LogSAGA Last Watched",
@@ -172,6 +182,7 @@ async def publish_discovery(client: Any, cfg: Settings) -> None:
                 cfg, "logsaga_watched_today", "LogSAGA Watched Today",
                 unit="min",
                 icon="mdi:calendar-today",
+                json_attrs=True,
             ),
         ),
         (
@@ -180,6 +191,7 @@ async def publish_discovery(client: Any, cfg: Settings) -> None:
                 cfg, "logsaga_watched_this_week", "LogSAGA Watched This Week",
                 unit="min",
                 icon="mdi:calendar-week",
+                json_attrs=True,
             ),
         ),
         (
@@ -251,9 +263,40 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=today_start.weekday())
+    five_min_ago = now - timedelta(minutes=5)
 
     with SessionLocal() as db:
-        # Last watched (most recent completed session)
+        # ── Now playing — open session active in the last 5 minutes ──────────
+        # Relies on the crash/resume addon writing bookmark every 20 s (Device 1).
+        # Device 2 (no addon) won't appear as "playing" mid-episode; this is expected.
+        now_playing_q = (
+            db.query(WatchSession, MediaItem)
+            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+            .filter(
+                WatchSession.status == SessionStatus.open,
+                WatchSession.last_activity_at >= five_min_ago,
+            )
+            .order_by(WatchSession.last_activity_at.desc())
+            .first()
+        )
+        now_playing: dict[str, Any] = {"state": ""}
+        if now_playing_q:
+            ws, mi = now_playing_q
+            label = mi.title
+            if mi.show_title:
+                ep = f"S{mi.season:02d}E{mi.episode:02d}" if mi.season and mi.episode else ""
+                label = f"{mi.show_title} {ep} \"{mi.title}\"".strip()
+            poster_url, fanart_url = _item_art_urls(db, mi.id, base_url)
+            now_playing = {
+                "state": label,
+                "type": mi.media_type,
+                "show": mi.show_title,
+                "poster_url": poster_url,
+                "fanart_url": fanart_url,
+                "percent": round(ws.percent, 1) if ws.percent else None,
+            }
+
+        # ── Last watched (most recent completed session) ──────────────────────
         last_watched_q = (
             db.query(WatchSession, MediaItem)
             .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
@@ -281,7 +324,7 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
                 "fanart_url": fanart_url,
             }
 
-        # Last started (most recent session any status)
+        # ── Last started (most recent session any status) ─────────────────────
         last_started_q = (
             db.query(WatchSession, MediaItem)
             .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
@@ -305,7 +348,7 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
                 "fanart_url": fanart_url,
             }
 
-        # Recent (last 10 non-ignored sessions)
+        # ── Recent (last 10 non-ignored sessions, with poster) ────────────────
         recent_sessions = (
             db.query(WatchSession, MediaItem)
             .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
@@ -321,28 +364,50 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
         )
         recent_items = []
         for ws, mi in recent_sessions:
+            poster_url, _ = _item_art_urls(db, mi.id, base_url)
             recent_items.append({
                 "title": mi.title,
                 "show": mi.show_title,
                 "status": ws.status,
                 "last_activity_at": _utc_iso(ws.last_activity_at),
+                "poster_url": poster_url,
             })
 
-        # In-progress
+        # ── In-progress (with poster + percent from most recent session) ──────
         in_progress_count = (
             db.query(MediaItem)
             .filter(MediaItem.kodi_state == KodiState.in_progress)
             .count()
         )
-        in_progress_items = (
+        in_progress_mi = (
             db.query(MediaItem)
             .filter(MediaItem.kodi_state == KodiState.in_progress)
             .order_by(MediaItem.updated_at.desc())
             .limit(10)
             .all()
         )
+        in_progress_items = []
+        for mi in in_progress_mi:
+            ws = (
+                db.query(WatchSession)
+                .filter(
+                    WatchSession.media_item_id == mi.id,
+                    WatchSession.status != SessionStatus.ignored,
+                )
+                .order_by(WatchSession.last_activity_at.desc())
+                .first()
+            )
+            poster_url, _ = _item_art_urls(db, mi.id, base_url)
+            in_progress_items.append({
+                "title": mi.title,
+                "show": mi.show_title,
+                "poster_url": poster_url,
+                "percent": round(ws.percent, 1) if ws and ws.percent else None,
+                "resume_s": int(ws.max_position_s) if ws and ws.max_position_s else None,
+                "runtime_s": (ws.runtime_s if ws and ws.runtime_s else mi.runtime_s),
+            })
 
-        # Watch time today
+        # ── Watch time + item list today ──────────────────────────────────────
         today_minutes = (
             db.query(func.sum(WatchSession.runtime_s))
             .filter(
@@ -354,7 +419,38 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
         ) or 0
         today_minutes = int(today_minutes / 60)
 
-        # Watch time this week
+        today_sessions = (
+            db.query(WatchSession, MediaItem)
+            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+            .filter(
+                WatchSession.status == SessionStatus.completed,
+                WatchSession.completed_at >= today_start,
+            )
+            .order_by(WatchSession.completed_at.asc())
+            .limit(20)
+            .all()
+        )
+        today_count = (
+            db.query(WatchSession)
+            .filter(
+                WatchSession.status == SessionStatus.completed,
+                WatchSession.completed_at >= today_start,
+            )
+            .count()
+        )
+        today_items = []
+        for ws, mi in today_sessions:
+            poster_url, _ = _item_art_urls(db, mi.id, base_url)
+            today_items.append({
+                "title": mi.title,
+                "show": mi.show_title,
+                "type": mi.media_type,
+                "completed_at": _utc_iso(ws.completed_at),
+                "runtime_min": int((ws.runtime_s or 0) / 60),
+                "poster_url": poster_url,
+            })
+
+        # ── Watch time + item list this week ──────────────────────────────────
         week_minutes = (
             db.query(func.sum(WatchSession.runtime_s))
             .filter(
@@ -366,7 +462,38 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
         ) or 0
         week_minutes = int(week_minutes / 60)
 
-        # Sync OK
+        week_sessions = (
+            db.query(WatchSession, MediaItem)
+            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+            .filter(
+                WatchSession.status == SessionStatus.completed,
+                WatchSession.completed_at >= week_start,
+            )
+            .order_by(WatchSession.completed_at.asc())
+            .limit(50)
+            .all()
+        )
+        week_count = (
+            db.query(WatchSession)
+            .filter(
+                WatchSession.status == SessionStatus.completed,
+                WatchSession.completed_at >= week_start,
+            )
+            .count()
+        )
+        week_items = []
+        for ws, mi in week_sessions:
+            poster_url, _ = _item_art_urls(db, mi.id, base_url)
+            week_items.append({
+                "title": mi.title,
+                "show": mi.show_title,
+                "type": mi.media_type,
+                "completed_at": _utc_iso(ws.completed_at),
+                "runtime_min": int((ws.runtime_s or 0) / 60),
+                "poster_url": poster_url,
+            })
+
+        # ── Sync OK ───────────────────────────────────────────────────────────
         sync = db.get(SyncState, 1)
         sync_ok = False
         if sync and sync.last_success_at:
@@ -374,18 +501,24 @@ def _build_state(engine: Engine, cfg: Settings) -> dict[str, Any]:
             sync_ok = age_s < 600  # ok if polled within 10 minutes
 
     return {
+        "now_playing": now_playing,
         "last_watched": last_watched,
         "last_started": last_started,
         "recent": {"state": str(recent_count), "sessions": recent_items},
         "in_progress": {
             "state": str(in_progress_count),
-            "items": [
-                {"title": mi.title, "show": mi.show_title}
-                for mi in in_progress_items
-            ],
+            "items": in_progress_items,
         },
-        "watched_today": {"state": str(today_minutes)},
-        "watched_this_week": {"state": str(week_minutes)},
+        "watched_today": {
+            "state": str(today_minutes),
+            "count": today_count,
+            "items": today_items,
+        },
+        "watched_this_week": {
+            "state": str(week_minutes),
+            "count": week_count,
+            "items": week_items,
+        },
         "sync_ok": {"state": "ON" if sync_ok else "OFF"},
     }
 
@@ -402,6 +535,7 @@ async def publish_state(client: Any, cfg: Settings, engine: Engine) -> None:
     t_base = _STATE_BASE
     b_base = _BINARY_BASE
     name_map = {
+        "now_playing": f"{t_base}/logsaga_now_playing/state",
         "last_watched": f"{t_base}/logsaga_last_watched/state",
         "last_started": f"{t_base}/logsaga_last_started/state",
         "recent": f"{t_base}/logsaga_recent/state",
