@@ -1,10 +1,14 @@
+import { useState } from 'react'
 import { createFileRoute, useNavigate, Link } from '@tanstack/react-router'
 import { useSeasonDetail, useShowDetail } from '@/api/queries'
+import type { WatchedItemIn } from '@/api/queries'
+import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { KodiStateBadge } from '@/components/shared/KodiStateBadge'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
-import { Check, ChevronRight, Tv } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { BookmarkPlus, Check, ChevronRight, Tv } from 'lucide-react'
 
 export const Route = createFileRoute('/shows_/$showId/seasons/$season')({
   component: SeasonDetailPage,
@@ -17,8 +21,9 @@ function SeasonDetailPage() {
   const seasonNum = parseInt(seasonParam, 10)
 
   const { data: season, isLoading, isError } = useSeasonDetail(showIdNum, seasonNum)
-  // Fetch show for breadcrumb title
+  // Fetch show for breadcrumb title + tmdb_id
   const { data: show } = useShowDetail(showIdNum)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
 
   if (isLoading) return <div className="p-4 md:p-6"><LoadingSkeleton count={8} variant="row" /></div>
   if (isError || !season) return <div className="p-4 md:p-6"><ErrorState message="Season not found." /></div>
@@ -46,11 +51,19 @@ function SeasonDetailPage() {
       </nav>
 
       {/* Season header */}
-      <div className="flex items-baseline gap-3 mb-6">
-        <h1 className="text-2xl font-bold">{showTitle} — Season {season.season}</h1>
-        <span className="text-sm text-muted-foreground">
-          {season.watched_episodes}/{season.total_episodes} watched
-        </span>
+      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold">{showTitle} — Season {season.season}</h1>
+          <span className="text-sm text-muted-foreground">
+            {season.watched_episodes}/{season.total_episodes} watched
+          </span>
+        </div>
+        {show?.tmdb_id && season.episodes.length > 0 && (
+          <Button variant="outline" size="sm" onClick={() => setAddDialogOpen(true)}>
+            <BookmarkPlus size={14} className="mr-1.5" />
+            Add Season to History
+          </Button>
+        )}
       </div>
 
       {/* Episode list */}
@@ -112,6 +125,37 @@ function SeasonDetailPage() {
           </div>
         ))}
       </div>
+
+      {/* Add Season to History dialog */}
+      {show?.tmdb_id && (() => {
+        const tmdbIdNum = parseInt(show.tmdb_id!, 10)
+        const items: WatchedItemIn[] = season.episodes.map(ep => ({
+          media_type: 'episode' as const,
+          tmdb_id: tmdbIdNum,
+          season: seasonNum,
+          episode: ep.episode,
+          watched_at: '',
+        }))
+        const releaseDates = new Map<string, string>()
+        let missingReleaseDates = 0
+        for (const ep of season.episodes) {
+          if (ep.release_date) {
+            releaseDates.set(`${seasonNum}-${ep.episode}`, ep.release_date)
+          } else {
+            missingReleaseDates++
+          }
+        }
+        return (
+          <AddToHistoryDialog
+            open={addDialogOpen}
+            onOpenChange={setAddDialogOpen}
+            items={items}
+            releaseDates={releaseDates}
+            missingReleaseDates={missingReleaseDates}
+            label={`Add Season ${seasonNum} (${items.length} episodes)`}
+          />
+        )
+      })()}
     </div>
   )
 }

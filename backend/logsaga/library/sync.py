@@ -91,11 +91,17 @@ def _sync_shows(kodi_conn, db, result: SyncResult) -> None:
     shows = fetch_library_shows(kodi_conn)
     logger.debug("library_sync_shows_fetched", count=len(shows))
 
-    # Load all existing shows into memory (keyed by kodi_idShow)
+    all_rows = db.query(KodiShow).all()
+
+    # Primary index: kodi_idShow → row (existing Kodi-linked rows)
     existing: dict[int, KodiShow] = {
-        s.kodi_idShow: s
-        for s in db.query(KodiShow).all()
-        if s.kodi_idShow is not None
+        s.kodi_idShow: s for s in all_rows if s.kodi_idShow is not None
+    }
+    # Secondary index: tmdb_id → row (TMDB-only rows created by manual history)
+    tmdb_only: dict[str, KodiShow] = {
+        s.tmdb_id: s
+        for s in all_rows
+        if s.kodi_idShow is None and s.tmdb_id is not None
     }
 
     seen_kodi_ids: set[int] = set()
@@ -128,6 +134,24 @@ def _sync_shows(kodi_conn, db, result: SyncResult) -> None:
             if show.tmdb_id:
                 row.tmdb_id = show.tmdb_id
             row.updated_at = now
+            result.shows_updated += 1
+        elif show.tmdb_id and show.tmdb_id in tmdb_only:
+            # Kodi now has this show that was manually added from TMDB — link them
+            row = tmdb_only[show.tmdb_id]
+            row.kodi_idShow = kid
+            row.title = show.title
+            row.plot = show.plot
+            row.year = year
+            row.premiered = show.premiered
+            row.studio = show.studio
+            row.status = show.status
+            row.genres = show.genres
+            if show.tvdb_id:
+                row.tvdb_id = show.tvdb_id
+            if show.imdb_id:
+                row.imdb_id = show.imdb_id
+            row.updated_at = now
+            existing[kid] = row  # keep the unique-constraint in sync
             result.shows_updated += 1
         else:
             new_show = KodiShow(
@@ -165,13 +189,21 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
     movies = fetch_library_movies(kodi_conn)
     logger.debug("library_sync_movies_fetched", count=len(movies))
 
-    # Load all existing movie items (keyed by kodi_media_id)
+    all_movies = db.query(MediaItem).filter(
+        MediaItem.media_type == MediaType.movie
+    ).all()
+
+    # Primary index: kodi_media_id → row
     existing: dict[int, MediaItem] = {
         item.kodi_media_id: item
-        for item in db.query(MediaItem).filter(
-            MediaItem.media_type == MediaType.movie,
-            MediaItem.kodi_media_id.isnot(None),
-        ).all()
+        for item in all_movies
+        if item.kodi_media_id is not None
+    }
+    # Secondary index: tmdb_id → row (TMDB-only movies from manual history)
+    tmdb_only_movies: dict[str, MediaItem] = {
+        item.tmdb_id: item
+        for item in all_movies
+        if item.kodi_media_id is None and item.tmdb_id is not None
     }
 
     seen_ids: set[int] = set()
@@ -207,6 +239,24 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
                 except (ValueError, IndexError):
                     pass
             item.updated_at = now
+            result.movies_updated += 1
+        elif movie.tmdb_id and movie.tmdb_id in tmdb_only_movies:
+            # Kodi now has this movie that was manually added from TMDB — link them
+            item = tmdb_only_movies[movie.tmdb_id]
+            item.kodi_media_id = movie.media_id
+            item.kodi_file_id = movie.file_id
+            item.kodi_state = _derive_state(movie.play_count, item.kodi_state)
+            item.date_added = date_added
+            if not item.runtime_s and movie.runtime_s:
+                item.runtime_s = int(movie.runtime_s)
+            if not item.plot and movie.plot:
+                item.plot = movie.plot
+            if not item.genres and movie.genres:
+                item.genres = movie.genres
+            if not item.director and movie.director:
+                item.director = movie.director
+            item.updated_at = now
+            existing[movie.media_id] = item  # keep primary index consistent
             result.movies_updated += 1
         else:
             year: Optional[int] = None
@@ -261,14 +311,29 @@ def _sync_episodes(
     episodes = fetch_library_episodes(kodi_conn)
     logger.debug("library_sync_episodes_fetched", count=len(episodes))
 
-    # Load all existing episode items (keyed by kodi_media_id)
+    all_eps = db.query(MediaItem).filter(
+        MediaItem.media_type == MediaType.episode
+    ).all()
+
+    # Primary index: kodi_media_id → row
     existing: dict[int, MediaItem] = {
         item.kodi_media_id: item
-        for item in db.query(MediaItem).filter(
-            MediaItem.media_type == MediaType.episode,
-            MediaItem.kodi_media_id.isnot(None),
-        ).all()
+        for item in all_eps
+        if item.kodi_media_id is not None
     }
+
+    # Secondary index: (show_tmdb_id, season, episode) → row (TMDB-only episodes)
+    # Need the show's tmdb_id for each episode.  Build local_show_id → tmdb_id map.
+    show_tmdb_map: dict[int, str | None] = {
+        s.id: s.tmdb_id for s in db.query(KodiShow).all()
+    }
+    # Key: (tmdb_id of show, season, episode)
+    tmdb_only_eps: dict[tuple, MediaItem] = {}
+    for item in all_eps:
+        if item.kodi_media_id is None and item.show_id is not None:
+            show_tmdb_id = show_tmdb_map.get(item.show_id)
+            if show_tmdb_id and item.season is not None and item.episode is not None:
+                tmdb_only_eps[(show_tmdb_id, item.season, item.episode)] = item
 
     seen_ids: set[int] = set()
     now = _now()
@@ -309,33 +374,53 @@ def _sync_episodes(
             item.updated_at = now
             result.episodes_updated += 1
         else:
-            year: Optional[int] = None
-            if ep.release_date:
-                try:
-                    year = int(ep.release_date[:4])
-                except (ValueError, IndexError):
-                    pass
-
-            new_item = MediaItem(
-                media_type=MediaType.episode,
-                title=ep.title,
-                show_title=ep.show_title,
-                season=ep.season,
-                episode=ep.episode,
-                year=year,
-                release_date=ep.release_date,
-                plot=ep.plot,
-                genres=ep.genres,
-                date_added=date_added,
-                kodi_file_id=ep.file_id,
-                kodi_media_id=ep.media_id,
-                show_id=show_id,
-                kodi_state=_derive_state(ep.play_count, None),
-                created_at=now,
-                updated_at=now,
+            # Check TMDB-only episodes before creating a new row
+            ep_show_id = show_id_map.get(ep.kodi_idShow)
+            ep_show_tmdb: str | None = show_tmdb_map.get(ep_show_id) if ep_show_id else None
+            tmdb_key = (
+                (ep_show_tmdb, ep.season, ep.episode)
+                if ep_show_tmdb and ep.season is not None and ep.episode is not None
+                else None
             )
-            db.add(new_item)
-            result.episodes_new += 1
+            tmdb_match = tmdb_only_eps.get(tmdb_key) if tmdb_key else None
+            if tmdb_match is not None:
+                # Kodi now has this episode that was manually added from TMDB — link them
+                tmdb_match.kodi_media_id = ep.media_id
+                tmdb_match.kodi_file_id = ep.file_id
+                tmdb_match.kodi_state = _derive_state(ep.play_count, tmdb_match.kodi_state)
+                tmdb_match.date_added = date_added
+                tmdb_match.show_id = show_id
+                tmdb_match.updated_at = now
+                existing[ep.media_id] = tmdb_match
+                result.episodes_updated += 1
+            else:
+                year: Optional[int] = None
+                if ep.release_date:
+                    try:
+                        year = int(ep.release_date[:4])
+                    except (ValueError, IndexError):
+                        pass
+
+                new_item = MediaItem(
+                    media_type=MediaType.episode,
+                    title=ep.title,
+                    show_title=ep.show_title,
+                    season=ep.season,
+                    episode=ep.episode,
+                    year=year,
+                    release_date=ep.release_date,
+                    plot=ep.plot,
+                    genres=ep.genres,
+                    date_added=date_added,
+                    kodi_file_id=ep.file_id,
+                    kodi_media_id=ep.media_id,
+                    show_id=show_id,
+                    kodi_state=_derive_state(ep.play_count, None),
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(new_item)
+                result.episodes_new += 1
 
         batch_count += 1
         if batch_count % _BATCH == 0:

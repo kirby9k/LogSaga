@@ -89,12 +89,14 @@ class CompletionReason(str, enum.Enum):
     position = "position"           # reached WATCHED_PERCENT or credits window
     kodi_playcount = "kodi_playcount"  # Kodi bumped playCount (natural end or Device 2)
     kodi_marked = "kodi_marked"    # "Mark as watched" from Kodi menu (future: distinguishable)
+    manual = "manual"              # manually added via POST /api/watched
 
 
 class SessionSource(str, enum.Enum):
     poll = "poll"
     backfill = "backfill"
     backfill_prior = "backfill_prior"  # placeholder for plays before backfill with unknown date
+    manual = "manual"              # manually added via POST /api/watched
 
 
 # ---------------------------------------------------------------------------
@@ -400,4 +402,35 @@ class Artwork(Base):
         Index("ix_artwork_media_item_id", "media_item_id"),
         # One row per (item, art_type) — a media item has at most one of each art type
         UniqueConstraint("media_item_id", "art_type", name="uq_artwork_item_type"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# tmdb_cache — 30-day TTL JSON cache for TMDB API responses
+# ---------------------------------------------------------------------------
+class TMDBCache(Base):
+    __tablename__ = "tmdb_cache"
+
+    # Composite key: "movie:{id}", "tv:{id}", "tv:{id}:season:{n}", "search:{q}:{type}"
+    cache_key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    data_json: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# recently_viewed — server-side log of TMDB pages browsed (not yet added)
+# ---------------------------------------------------------------------------
+class RecentlyViewed(Base):
+    __tablename__ = "recently_viewed"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    media_type: Mapped[str] = mapped_column(String(10), nullable=False)  # "movie" or "tv"
+    tmdb_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    poster_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # TMDB poster URL
+    viewed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_recently_viewed_viewed_at", "viewed_at"),
+        UniqueConstraint("media_type", "tmdb_id", name="uq_recently_viewed_tmdb"),
     )

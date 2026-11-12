@@ -348,3 +348,134 @@ class HealthOut(BaseModel):
     observation_count: int = 0
     error_count: int = 0
     settings: dict[str, Any] = {}
+
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+class SearchResultOut(BaseModel):
+    """One entry in GET /api/search results."""
+    source: str                      # "local" or "tmdb"
+    media_type: str                  # "movie", "episode", or "tv" (TMDB shows)
+    tmdb_id: Optional[str] = None
+    local_id: Optional[int] = None   # MediaItem.id if in local DB
+    show_id: Optional[int] = None    # KodiShow.id for local episodes/shows
+    title: str
+    show_title: Optional[str] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    year: Optional[int] = None
+    poster_url: Optional[str] = None  # local thumb if available, else TMDB URL
+    has_history: bool = False          # True if item has at least one WatchSession
+
+
+class SearchOut(BaseModel):
+    results: list[SearchResultOut]
+    tmdb_enabled: bool
+
+
+# ---------------------------------------------------------------------------
+# TMDB detail responses (sourced from TMDB API, cached in tmdb_cache)
+# ---------------------------------------------------------------------------
+class TMDBPersonOut(BaseModel):
+    name: str
+    job: Optional[str] = None    # for crew
+    character: Optional[str] = None  # for cast
+
+
+class TMDBEpisodeOut(BaseModel):
+    season: int
+    episode: int
+    title: str
+    overview: Optional[str] = None
+    air_date: Optional[str] = None   # "YYYY-MM-DD" or None
+    runtime: Optional[int] = None    # minutes
+    still_url: Optional[str] = None  # TMDB still image URL
+
+
+class TMDBSeasonOut(BaseModel):
+    tmdb_id: int            # TV show TMDB ID
+    season: int
+    title: str
+    overview: Optional[str] = None
+    air_date: Optional[str] = None
+    poster_url: Optional[str] = None
+    episodes: list[TMDBEpisodeOut] = []
+    # local_id is populated if the show exists in the local DB
+    local_show_id: Optional[int] = None
+
+
+class TMDBSeasonSummaryOut(BaseModel):
+    season: int
+    title: str
+    episode_count: int
+    air_date: Optional[str] = None
+    poster_url: Optional[str] = None
+
+
+class TMDBTVOut(BaseModel):
+    tmdb_id: int
+    title: str
+    overview: Optional[str] = None
+    first_air_date: Optional[str] = None
+    status: Optional[str] = None
+    genres: list[str] = []
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
+    vote_average: Optional[float] = None
+    seasons: list[TMDBSeasonSummaryOut] = []
+    cast: list[TMDBPersonOut] = []
+    # local_show_id is set if this show exists in the local KodiShow table
+    local_show_id: Optional[int] = None
+
+
+class TMDBMovieOut(BaseModel):
+    tmdb_id: int
+    title: str
+    overview: Optional[str] = None
+    release_date: Optional[str] = None   # "YYYY-MM-DD"
+    runtime: Optional[int] = None        # minutes
+    genres: list[str] = []
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
+    vote_average: Optional[float] = None
+    director: Optional[str] = None
+    cast: list[TMDBPersonOut] = []
+    # local_id is set if this movie exists in the local MediaItem table
+    local_id: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Recently viewed (TMDB browse history)
+# ---------------------------------------------------------------------------
+class RecentlyViewedOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    media_type: str       # "movie" or "tv"
+    tmdb_id: int
+    title: str
+    poster_url: Optional[str] = None
+    viewed_at: UTCDatetime
+
+
+# ---------------------------------------------------------------------------
+# Manual watch history (POST /api/watched)
+# ---------------------------------------------------------------------------
+class WatchedItemIn(BaseModel):
+    """One item to mark as watched."""
+    media_type: str              # "movie" or "episode"
+    tmdb_id: int                 # For episodes: the TV show's TMDB ID
+    season: Optional[int] = None   # Episodes only
+    episode: Optional[int] = None  # Episodes only
+    watched_at: datetime           # UTC ISO 8601
+
+
+class PostWatchedIn(BaseModel):
+    items: list[WatchedItemIn]
+
+
+class PostWatchedOut(BaseModel):
+    created: int
+    skipped: int
+    errors: list[str] = []

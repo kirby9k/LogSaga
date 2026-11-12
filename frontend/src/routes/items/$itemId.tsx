@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useItem, useHideSession } from '@/api/queries'
+import type { WatchedItemIn } from '@/api/queries'
+import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { PercentBar } from '@/components/shared/PercentBar'
@@ -26,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ChevronDown, Trash2 } from 'lucide-react'
+import { BookmarkPlus, ChevronDown, Trash2 } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { formatEpisode, formatDate, formatRuntime } from '@/lib/format'
 import { KODI_STATE_LABELS, COMPLETION_REASON_LABELS } from '@/lib/constants'
@@ -74,6 +76,7 @@ function ItemDetailPage() {
   const { itemId } = Route.useParams()
   const id = Number(itemId)
   const { data, isLoading, isError } = useItem(id)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
 
   if (isLoading) {
     return (
@@ -225,6 +228,20 @@ function ItemDetailPage() {
               </a>
             )}
           </div>
+
+          {/* Add to History */}
+          {data.tmdb_id && (
+            <div className="pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAddDialogOpen(true)}
+              >
+                <BookmarkPlus size={14} className="mr-1.5" />
+                Add to History
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -288,6 +305,23 @@ function ItemDetailPage() {
           </Collapsible>
         </>
       )}
+
+      {/* Add to History dialog */}
+      {data.tmdb_id && (() => {
+        const tmdbIdNum = parseInt(data.tmdb_id!, 10)
+        const items: WatchedItemIn[] = data.media_type === 'movie'
+          ? [{ media_type: 'movie', tmdb_id: tmdbIdNum, watched_at: '' }]
+          : [{ media_type: 'episode', tmdb_id: tmdbIdNum, season: data.season ?? undefined, episode: data.episode ?? undefined, watched_at: '' }]
+        return (
+          <AddToHistoryDialog
+            open={addDialogOpen}
+            onOpenChange={setAddDialogOpen}
+            items={items}
+            releaseDate={data.release_date ?? null}
+            label="Add to History"
+          />
+        )
+      })()}
     </div>
   )
 }

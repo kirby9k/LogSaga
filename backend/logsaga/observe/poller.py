@@ -79,8 +79,15 @@ def _upsert_media_item(
     Find or create a MediaItem for the given Kodi file_id.
 
     Returns the MediaItem, or None if the file is not a movie or episode.
+
+    Deduplication order:
+      1. kodi_file_id — fast path (normal case)
+      2. tmdb_id (+ season/episode for episodes) — catches TMDB-only items
+         that were manually added before Kodi had them in the library
+      3. tvdb_id (+ season/episode) — fallback if tmdb_id not available
+      4. Create new MediaItem
     """
-    # First check if we already have this file tracked
+    # 1. Fast path: file already tracked
     item = db.query(MediaItem).filter_by(kodi_file_id=file_id).first()
     if item:
         return item
@@ -89,6 +96,52 @@ def _upsert_media_item(
     identity = identify_file(conn, file_id)
     if identity is None:
         return None  # extra / trailer / orphan
+
+    # 2/3. Dedup against manually-added TMDB-only items
+    existing: Optional[MediaItem] = None
+    if identity.media_type == "movie":
+        if identity.tmdb_id:
+            existing = (
+                db.query(MediaItem)
+                .filter_by(media_type="movie", tmdb_id=identity.tmdb_id)
+                .first()
+            )
+        if existing is None and identity.imdb_id:
+            existing = (
+                db.query(MediaItem)
+                .filter_by(media_type="movie", imdb_id=identity.imdb_id)
+                .first()
+            )
+    elif identity.media_type == "episode" and identity.season is not None and identity.episode is not None:
+        if identity.tmdb_id:
+            existing = (
+                db.query(MediaItem)
+                .filter_by(
+                    media_type="episode",
+                    tmdb_id=identity.tmdb_id,
+                    season=identity.season,
+                    episode=identity.episode,
+                )
+                .first()
+            )
+        if existing is None and identity.tvdb_id:
+            existing = (
+                db.query(MediaItem)
+                .filter_by(
+                    media_type="episode",
+                    tvdb_id=identity.tvdb_id,
+                    season=identity.season,
+                    episode=identity.episode,
+                )
+                .first()
+            )
+
+    if existing is not None:
+        # Link the Kodi file to the existing manually-added item
+        existing.kodi_file_id = file_id
+        existing.kodi_media_id = identity.media_id
+        db.flush()
+        return existing
 
     year: Optional[int] = None
     if identity.release_date:

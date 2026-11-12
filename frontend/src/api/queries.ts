@@ -406,3 +406,124 @@ export function useTriggerJob(jobName: string) {
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/search
+// ---------------------------------------------------------------------------
+export interface SearchParams {
+  q: string
+  type?: string
+  limit?: number
+}
+
+export function useSearch(params: SearchParams, enabled = true) {
+  return useQuery({
+    queryKey: ['search', params] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/search', {
+        params: { query: { q: params.q, type: params.type, limit: params.limit } },
+      })
+      return assertOk(data, error)
+    },
+    enabled: enabled && params.q.trim().length > 0,
+    staleTime: 60_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/tmdb/movie/{tmdb_id}
+// ---------------------------------------------------------------------------
+export function useTMDBMovie(tmdbId: number | null) {
+  return useQuery({
+    queryKey: ['tmdbMovie', tmdbId] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/tmdb/movie/{tmdb_id}', {
+        params: { path: { tmdb_id: tmdbId! } },
+      })
+      return assertOk(data, error)
+    },
+    enabled: tmdbId !== null,
+    staleTime: 24 * 60 * 60_000, // 24 h (backend caches for 30 days)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/tmdb/tv/{tmdb_id}
+// ---------------------------------------------------------------------------
+export function useTMDBTV(tmdbId: number | null) {
+  return useQuery({
+    queryKey: ['tmdbTV', tmdbId] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/tmdb/tv/{tmdb_id}', {
+        params: { path: { tmdb_id: tmdbId! } },
+      })
+      return assertOk(data, error)
+    },
+    enabled: tmdbId !== null,
+    staleTime: 24 * 60 * 60_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/tmdb/tv/{tmdb_id}/season/{season_number}
+// ---------------------------------------------------------------------------
+export function useTMDBSeason(tmdbId: number | null, season: number | null) {
+  return useQuery({
+    queryKey: ['tmdbSeason', tmdbId, season] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET(
+        '/api/tmdb/tv/{tmdb_id}/season/{season_number}',
+        { params: { path: { tmdb_id: tmdbId!, season_number: season! } } },
+      )
+      return assertOk(data, error)
+    },
+    enabled: tmdbId !== null && season !== null,
+    staleTime: 24 * 60 * 60_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/recently-viewed
+// ---------------------------------------------------------------------------
+export function useRecentlyViewed(limit = 20) {
+  return useQuery({
+    queryKey: ['recentlyViewed', limit] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/recently-viewed', {
+        params: { query: { limit } },
+      })
+      return assertOk(data, error)
+    },
+    staleTime: 30_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/watched  — manual watch history
+// ---------------------------------------------------------------------------
+export interface WatchedItemIn {
+  media_type: string
+  tmdb_id: number
+  season?: number | null
+  episode?: number | null
+  watched_at: string
+}
+
+export function usePostWatched() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (items: WatchedItemIn[]) => {
+      const { data, error } = await apiClient.POST('/api/watched', {
+        body: { items },
+      })
+      return assertOk(data, error)
+    },
+    onSuccess: () => {
+      // Invalidate history views
+      queryClient.invalidateQueries({ queryKey: QK.recent({}) })
+      queryClient.invalidateQueries({ queryKey: ['recentInfinite'] })
+      queryClient.invalidateQueries({ queryKey: ['recentlyViewed'] })
+      queryClient.invalidateQueries({ queryKey: QK.inProgress })
+    },
+  })
+}

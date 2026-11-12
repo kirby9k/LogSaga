@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     mqtt_password: str = ""
     mqtt_discovery_prefix: str = "homeassistant"
 
+    # --- TMDB (optional — search and manual history features; leave blank to disable) ---
+    tmdb_api_key: str = ""
+
     # --- App ---
     public_base_url: str = "http://localhost:8790"
     log_level: str = "INFO"
@@ -75,6 +78,10 @@ class Settings(BaseSettings):
     @property
     def mqtt_enabled(self) -> bool:
         return bool(self.mqtt_host)
+
+    @property
+    def tmdb_enabled(self) -> bool:
+        return bool(self.tmdb_api_key)
 
 
 def get_settings() -> Settings:

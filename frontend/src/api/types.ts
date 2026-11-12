@@ -157,6 +157,73 @@ export interface paths {
       };
     };
   };
+  "/api/search": {
+    get: {
+      parameters: {
+        query: {
+          q: string;
+          type?: string;
+          limit?: number;
+        };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["SearchOut"] } };
+      };
+    };
+  };
+  "/api/tmdb/movie/{tmdb_id}": {
+    get: {
+      parameters: {
+        path: { tmdb_id: number };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["TMDBMovieOut"] } };
+        503: { content: { "application/json": unknown } };
+      };
+    };
+  };
+  "/api/tmdb/tv/{tmdb_id}": {
+    get: {
+      parameters: {
+        path: { tmdb_id: number };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["TMDBTVOut"] } };
+        503: { content: { "application/json": unknown } };
+      };
+    };
+  };
+  "/api/tmdb/tv/{tmdb_id}/season/{season_number}": {
+    get: {
+      parameters: {
+        path: { tmdb_id: number; season_number: number };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["TMDBSeasonOut"] } };
+        503: { content: { "application/json": unknown } };
+      };
+    };
+  };
+  "/api/recently-viewed": {
+    get: {
+      parameters: {
+        query?: { limit?: number };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["RecentlyViewedOut"][] } };
+      };
+    };
+  };
+  "/api/watched": {
+    post: {
+      requestBody: {
+        content: { "application/json": components["schemas"]["PostWatchedIn"] };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["PostWatchedOut"] } };
+      };
+    };
+  };
 }
 
 export interface components {
@@ -423,6 +490,122 @@ export interface components {
       loc: (string | number)[];
       msg: string;
       type: string;
+    };
+
+    // --- Search ---
+    SearchResultOut: {
+      source: string;         // "local" or "tmdb"
+      media_type: string;     // "movie", "episode", "tv"
+      tmdb_id?: string | null;
+      local_id?: number | null;
+      show_id?: number | null;
+      title: string;
+      show_title?: string | null;
+      season?: number | null;
+      episode?: number | null;
+      year?: number | null;
+      poster_url?: string | null;
+      has_history: boolean;
+    };
+
+    SearchOut: {
+      results: components["schemas"]["SearchResultOut"][];
+      tmdb_enabled: boolean;
+    };
+
+    // --- TMDB detail ---
+    TMDBPersonOut: {
+      name: string;
+      job?: string | null;
+      character?: string | null;
+    };
+
+    TMDBEpisodeOut: {
+      season: number;
+      episode: number;
+      title: string;
+      overview?: string | null;
+      air_date?: string | null;
+      runtime?: number | null;
+      still_url?: string | null;
+    };
+
+    TMDBSeasonSummaryOut: {
+      season: number;
+      title: string;
+      episode_count: number;
+      air_date?: string | null;
+      poster_url?: string | null;
+    };
+
+    TMDBSeasonOut: {
+      tmdb_id: number;
+      season: number;
+      title: string;
+      overview?: string | null;
+      air_date?: string | null;
+      poster_url?: string | null;
+      episodes: components["schemas"]["TMDBEpisodeOut"][];
+      local_show_id?: number | null;
+    };
+
+    TMDBTVOut: {
+      tmdb_id: number;
+      title: string;
+      overview?: string | null;
+      first_air_date?: string | null;
+      status?: string | null;
+      genres: string[];
+      poster_url?: string | null;
+      backdrop_url?: string | null;
+      vote_average?: number | null;
+      seasons: components["schemas"]["TMDBSeasonSummaryOut"][];
+      cast: components["schemas"]["TMDBPersonOut"][];
+      local_show_id?: number | null;
+    };
+
+    TMDBMovieOut: {
+      tmdb_id: number;
+      title: string;
+      overview?: string | null;
+      release_date?: string | null;
+      runtime?: number | null;
+      genres: string[];
+      poster_url?: string | null;
+      backdrop_url?: string | null;
+      vote_average?: number | null;
+      director?: string | null;
+      cast: components["schemas"]["TMDBPersonOut"][];
+      local_id?: number | null;
+    };
+
+    // --- Recently viewed ---
+    RecentlyViewedOut: {
+      id: number;
+      media_type: string;
+      tmdb_id: number;
+      title: string;
+      poster_url?: string | null;
+      viewed_at: string;
+    };
+
+    // --- Manual history ---
+    WatchedItemIn: {
+      media_type: string;
+      tmdb_id: number;
+      season?: number | null;
+      episode?: number | null;
+      watched_at: string;  // ISO 8601 UTC
+    };
+
+    PostWatchedIn: {
+      items: components["schemas"]["WatchedItemIn"][];
+    };
+
+    PostWatchedOut: {
+      created: number;
+      skipped: number;
+      errors: string[];
     };
   };
 }

@@ -15,12 +15,16 @@ import { Route as HistoryRouteImport } from './routes/history'
 import { Route as MoviesRouteImport } from './routes/movies'
 import { Route as PartialRouteImport } from './routes/partial'
 import { Route as RecentlyAddedRouteImport } from './routes/recently-added'
+import { Route as RecentlyViewedRouteImport } from './routes/recently-viewed'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ShowsRouteImport } from './routes/shows'
 import { Route as StatsRouteImport } from './routes/stats'
 import { Route as ItemsItemIdRouteImport } from './routes/items/$itemId'
 import { Route as ShowsShowIdRouteImport } from './routes/shows_.$showId'
+import { Route as TmdbMovieTmdbIdRouteImport } from './routes/tmdb.movie.$tmdbId'
+import { Route as TmdbTvTmdbIdRouteImport } from './routes/tmdb.tv.$tmdbId'
 import { Route as ShowsShowIdSeasonsSeasonRouteImport } from './routes/shows_.$showId.seasons.$season'
+import { Route as TmdbTvTmdbIdSeasonSeasonRouteImport } from './routes/tmdb.tv.$tmdbId.season.$season'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -52,6 +56,11 @@ const RecentlyAddedRoute = RecentlyAddedRouteImport.update({
   path: '/recently-added',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RecentlyViewedRoute = RecentlyViewedRouteImport.update({
+  id: '/recently-viewed',
+  path: '/recently-viewed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -77,11 +86,27 @@ const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
   path: '/shows/$showId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TmdbMovieTmdbIdRoute = TmdbMovieTmdbIdRouteImport.update({
+  id: '/tmdb/movie/$tmdbId',
+  path: '/tmdb/movie/$tmdbId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TmdbTvTmdbIdRoute = TmdbTvTmdbIdRouteImport.update({
+  id: '/tmdb/tv/$tmdbId',
+  path: '/tmdb/tv/$tmdbId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ShowsShowIdSeasonsSeasonRoute =
   ShowsShowIdSeasonsSeasonRouteImport.update({
     id: '/seasons/$season',
     path: '/seasons/$season',
     getParentRoute: () => ShowsShowIdRoute,
+  } as any)
+const TmdbTvTmdbIdSeasonSeasonRoute =
+  TmdbTvTmdbIdSeasonSeasonRouteImport.update({
+    id: '/season/$season',
+    path: '/season/$season',
+    getParentRoute: () => TmdbTvTmdbIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -91,12 +116,16 @@ export interface FileRoutesByFullPath {
   '/movies': typeof MoviesRoute
   '/partial': typeof PartialRoute
   '/recently-added': typeof RecentlyAddedRoute
+  '/recently-viewed': typeof RecentlyViewedRoute
   '/settings': typeof SettingsRoute
   '/shows': typeof ShowsRoute
   '/stats': typeof StatsRoute
   '/items/$itemId': typeof ItemsItemIdRoute
   '/shows/$showId': typeof ShowsShowIdRouteWithChildren
+  '/tmdb/movie/$tmdbId': typeof TmdbMovieTmdbIdRoute
+  '/tmdb/tv/$tmdbId': typeof TmdbTvTmdbIdRouteWithChildren
   '/shows/$showId/seasons/$season': typeof ShowsShowIdSeasonsSeasonRoute
+  '/tmdb/tv/$tmdbId/season/$season': typeof TmdbTvTmdbIdSeasonSeasonRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -105,12 +134,16 @@ export interface FileRoutesByTo {
   '/movies': typeof MoviesRoute
   '/partial': typeof PartialRoute
   '/recently-added': typeof RecentlyAddedRoute
+  '/recently-viewed': typeof RecentlyViewedRoute
   '/settings': typeof SettingsRoute
   '/shows': typeof ShowsRoute
   '/stats': typeof StatsRoute
   '/items/$itemId': typeof ItemsItemIdRoute
   '/shows/$showId': typeof ShowsShowIdRouteWithChildren
+  '/tmdb/movie/$tmdbId': typeof TmdbMovieTmdbIdRoute
+  '/tmdb/tv/$tmdbId': typeof TmdbTvTmdbIdRouteWithChildren
   '/shows/$showId/seasons/$season': typeof ShowsShowIdSeasonsSeasonRoute
+  '/tmdb/tv/$tmdbId/season/$season': typeof TmdbTvTmdbIdSeasonSeasonRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -120,12 +153,16 @@ export interface FileRoutesById {
   '/movies': typeof MoviesRoute
   '/partial': typeof PartialRoute
   '/recently-added': typeof RecentlyAddedRoute
+  '/recently-viewed': typeof RecentlyViewedRoute
   '/settings': typeof SettingsRoute
   '/shows': typeof ShowsRoute
   '/stats': typeof StatsRoute
   '/items/$itemId': typeof ItemsItemIdRoute
   '/shows_/$showId': typeof ShowsShowIdRouteWithChildren
+  '/tmdb/movie/$tmdbId': typeof TmdbMovieTmdbIdRoute
+  '/tmdb/tv/$tmdbId': typeof TmdbTvTmdbIdRouteWithChildren
   '/shows_/$showId/seasons/$season': typeof ShowsShowIdSeasonsSeasonRoute
+  '/tmdb/tv/$tmdbId/season/$season': typeof TmdbTvTmdbIdSeasonSeasonRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -136,12 +173,16 @@ export interface FileRouteTypes {
     | '/movies'
     | '/partial'
     | '/recently-added'
+    | '/recently-viewed'
     | '/settings'
     | '/shows'
     | '/stats'
     | '/items/$itemId'
     | '/shows/$showId'
+    | '/tmdb/movie/$tmdbId'
+    | '/tmdb/tv/$tmdbId'
     | '/shows/$showId/seasons/$season'
+    | '/tmdb/tv/$tmdbId/season/$season'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -150,12 +191,16 @@ export interface FileRouteTypes {
     | '/movies'
     | '/partial'
     | '/recently-added'
+    | '/recently-viewed'
     | '/settings'
     | '/shows'
     | '/stats'
     | '/items/$itemId'
     | '/shows/$showId'
+    | '/tmdb/movie/$tmdbId'
+    | '/tmdb/tv/$tmdbId'
     | '/shows/$showId/seasons/$season'
+    | '/tmdb/tv/$tmdbId/season/$season'
   id:
     | '__root__'
     | '/'
@@ -164,12 +209,16 @@ export interface FileRouteTypes {
     | '/movies'
     | '/partial'
     | '/recently-added'
+    | '/recently-viewed'
     | '/settings'
     | '/shows'
     | '/stats'
     | '/items/$itemId'
     | '/shows_/$showId'
+    | '/tmdb/movie/$tmdbId'
+    | '/tmdb/tv/$tmdbId'
     | '/shows_/$showId/seasons/$season'
+    | '/tmdb/tv/$tmdbId/season/$season'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -179,11 +228,14 @@ export interface RootRouteChildren {
   MoviesRoute: typeof MoviesRoute
   PartialRoute: typeof PartialRoute
   RecentlyAddedRoute: typeof RecentlyAddedRoute
+  RecentlyViewedRoute: typeof RecentlyViewedRoute
   SettingsRoute: typeof SettingsRoute
   ShowsRoute: typeof ShowsRoute
   StatsRoute: typeof StatsRoute
   ItemsItemIdRoute: typeof ItemsItemIdRoute
   ShowsShowIdRoute: typeof ShowsShowIdRouteWithChildren
+  TmdbMovieTmdbIdRoute: typeof TmdbMovieTmdbIdRoute
+  TmdbTvTmdbIdRoute: typeof TmdbTvTmdbIdRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -230,6 +282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RecentlyAddedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/recently-viewed': {
+      id: '/recently-viewed'
+      path: '/recently-viewed'
+      fullPath: '/recently-viewed'
+      preLoaderRoute: typeof RecentlyViewedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -265,12 +324,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShowsShowIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tmdb/movie/$tmdbId': {
+      id: '/tmdb/movie/$tmdbId'
+      path: '/tmdb/movie/$tmdbId'
+      fullPath: '/tmdb/movie/$tmdbId'
+      preLoaderRoute: typeof TmdbMovieTmdbIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tmdb/tv/$tmdbId': {
+      id: '/tmdb/tv/$tmdbId'
+      path: '/tmdb/tv/$tmdbId'
+      fullPath: '/tmdb/tv/$tmdbId'
+      preLoaderRoute: typeof TmdbTvTmdbIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/shows_/$showId/seasons/$season': {
       id: '/shows_/$showId/seasons/$season'
       path: '/seasons/$season'
       fullPath: '/shows/$showId/seasons/$season'
       preLoaderRoute: typeof ShowsShowIdSeasonsSeasonRouteImport
       parentRoute: typeof ShowsShowIdRoute
+    }
+    '/tmdb/tv/$tmdbId/season/$season': {
+      id: '/tmdb/tv/$tmdbId/season/$season'
+      path: '/season/$season'
+      fullPath: '/tmdb/tv/$tmdbId/season/$season'
+      preLoaderRoute: typeof TmdbTvTmdbIdSeasonSeasonRouteImport
+      parentRoute: typeof TmdbTvTmdbIdRoute
     }
   }
 }
@@ -287,6 +367,18 @@ const ShowsShowIdRouteWithChildren = ShowsShowIdRoute._addFileChildren(
   ShowsShowIdRouteChildren,
 )
 
+interface TmdbTvTmdbIdRouteChildren {
+  TmdbTvTmdbIdSeasonSeasonRoute: typeof TmdbTvTmdbIdSeasonSeasonRoute
+}
+
+const TmdbTvTmdbIdRouteChildren: TmdbTvTmdbIdRouteChildren = {
+  TmdbTvTmdbIdSeasonSeasonRoute: TmdbTvTmdbIdSeasonSeasonRoute,
+}
+
+const TmdbTvTmdbIdRouteWithChildren = TmdbTvTmdbIdRoute._addFileChildren(
+  TmdbTvTmdbIdRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ContinueRoute: ContinueRoute,
@@ -294,11 +386,14 @@ const rootRouteChildren: RootRouteChildren = {
   MoviesRoute: MoviesRoute,
   PartialRoute: PartialRoute,
   RecentlyAddedRoute: RecentlyAddedRoute,
+  RecentlyViewedRoute: RecentlyViewedRoute,
   SettingsRoute: SettingsRoute,
   ShowsRoute: ShowsRoute,
   StatsRoute: StatsRoute,
   ItemsItemIdRoute: ItemsItemIdRoute,
   ShowsShowIdRoute: ShowsShowIdRouteWithChildren,
+  TmdbMovieTmdbIdRoute: TmdbMovieTmdbIdRoute,
+  TmdbTvTmdbIdRoute: TmdbTvTmdbIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Generator
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from logsaga.config import Settings
@@ -25,3 +25,24 @@ def get_db(request: Request) -> Generator[Session, None, None]:
 def get_cfg(request: Request) -> Settings:
     """Return the application Settings (read once at startup)."""
     return request.app.state.settings
+
+
+def get_tmdb_client(
+    cfg: Settings = Depends(get_cfg),
+    db: Session = Depends(get_db),
+) -> "TMDBClient":  # type: ignore[name-defined]  # noqa: F821
+    """
+    Return a TMDBClient instance.
+
+    Raises HTTP 503 if TMDB_API_KEY is not configured.
+    Use this only on endpoints that strictly require TMDB access.
+    For search (which degrades gracefully), check cfg.tmdb_enabled inline.
+    """
+    from logsaga.tmdb.client import TMDBClient
+
+    if not cfg.tmdb_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="TMDB integration not configured. Set TMDB_API_KEY in your environment.",
+        )
+    return TMDBClient(api_key=cfg.tmdb_api_key, db=db)

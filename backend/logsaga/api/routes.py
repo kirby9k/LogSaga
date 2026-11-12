@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from logsaga.api.deps import get_cfg, get_db
+from logsaga.api.deps import get_cfg, get_db, get_tmdb_client
 from logsaga.api.schemas import (
     AdminSettingsIn,
     AdminSettingsOut,
@@ -31,10 +31,15 @@ from logsaga.api.schemas import (
     MovieSummaryOut,
     NextUnwatchedOut,
     ObservationOut,
+    PostWatchedIn,
+    PostWatchedOut,
     RecentItemOut,
     RecentlyAddedItemOut,
     RecentlyAddedListOut,
+    RecentlyViewedOut,
     RebuildSessionsOut,
+    SearchOut,
+    SearchResultOut,
     SeasonSummaryOut,
     SessionListOut,
     SessionOut,
@@ -42,6 +47,12 @@ from logsaga.api.schemas import (
     ShowStatOut,
     ShowSummaryOut,
     StatsOut,
+    TMDBEpisodeOut,
+    TMDBMovieOut,
+    TMDBPersonOut,
+    TMDBSeasonOut,
+    TMDBSeasonSummaryOut,
+    TMDBTVOut,
 )
 from logsaga.config import Settings
 from logsaga.models import (
@@ -52,6 +63,7 @@ from logsaga.models import (
     KodiState,
     MediaItem,
     MediaType,
+    RecentlyViewed,
     SessionStatus,
     SyncState,
     WatchSession,
@@ -1627,3 +1639,375 @@ async def trigger_enrich_metadata(request: Request, cfg: Settings = Depends(get_
         raise HTTPException(409, "Job already running")
     asyncio.create_task(_run_job("enrich_metadata", _do_enrich_metadata(request.app.state.engine, cfg)))
     return {"message": "Metadata enrichment triggered"}
+
+
+# ---------------------------------------------------------------------------
+# GET /search
+# ---------------------------------------------------------------------------
+@router.get("/search", response_model=SearchOut)
+async def search(
+    q: str = Query(..., min_length=1, description="Search query"),
+    type: str = Query("all", description="all | movie | tv"),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    cfg: Settings = Depends(get_cfg),
+) -> SearchOut:
+    """
+    Combined local library + TMDB search.
+
+    Local results are always returned. TMDB results are included when
+    TMDB_API_KEY is configured; items already in the local library are
+    de-duplicated (local version wins).
+    """
+    from logsaga.tmdb.client import TMDBClient
+
+    results: list[SearchResultOut] = []
+
+    # --- Local search ---
+    local_tmdb_ids: set[str] = set()
+
+    if type in ("all", "movie"):
+        movie_q = (
+            db.query(MediaItem)
+            .options(selectinload(MediaItem.artwork))
+            .filter(
+                MediaItem.media_type == MediaType.movie,
+                MediaItem.title.ilike(f"%{q}%"),
+            )
+            .limit(limit)
+            .all()
+        )
+        for item in movie_q:
+            has_hist = (
+                db.query(WatchSession.id)
+                .filter_by(media_item_id=item.id)
+                .first()
+            ) is not None
+            results.append(SearchResultOut(
+                source="local",
+                media_type="movie",
+                tmdb_id=item.tmdb_id,
+                local_id=item.id,
+                show_id=None,
+                title=item.title,
+                year=item.year,
+                poster_url=_poster_url(item, thumbnail=True),
+                has_history=has_hist,
+            ))
+            if item.tmdb_id:
+                local_tmdb_ids.add(item.tmdb_id)
+
+    if type in ("all", "tv"):
+        # Search shows by title
+        show_q = (
+            db.query(KodiShow)
+            .filter(KodiShow.title.ilike(f"%{q}%"))
+            .limit(limit)
+            .all()
+        )
+        for show in show_q:
+            # Check if any episode has history
+            has_hist = (
+                db.query(WatchSession.id)
+                .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+                .filter(MediaItem.show_id == show.id)
+                .first()
+            ) is not None
+            # Get poster from an episode
+            poster: Optional[str] = None
+            ep = (
+                db.query(MediaItem)
+                .options(selectinload(MediaItem.artwork))
+                .filter(MediaItem.show_id == show.id)
+                .first()
+            )
+            if ep:
+                poster = _poster_url(ep, thumbnail=True)
+            results.append(SearchResultOut(
+                source="local",
+                media_type="tv",
+                tmdb_id=show.tmdb_id,
+                local_id=None,
+                show_id=show.id,
+                title=show.title,
+                year=show.year,
+                poster_url=poster,
+                has_history=has_hist,
+            ))
+            if show.tmdb_id:
+                local_tmdb_ids.add(show.tmdb_id)
+
+    # --- TMDB search (if key available) ---
+    if cfg.tmdb_enabled:
+        try:
+            tmdb = TMDBClient(api_key=cfg.tmdb_api_key, db=db)
+            tmdb_type = {"movie": "movie", "tv": "tv", "all": "multi"}.get(type, "multi")
+            raw = await tmdb.search(q, media_type=tmdb_type)
+            tmdb_results = raw.get("results", [])
+
+            for r in tmdb_results[:limit]:
+                r_type = r.get("media_type") or type  # multi returns media_type
+                if r_type not in ("movie", "tv"):
+                    continue
+                r_tmdb_id = str(r.get("id", ""))
+                if r_tmdb_id in local_tmdb_ids:
+                    continue  # local version already in results
+
+                title = r.get("title") or r.get("name") or ""
+                year: Optional[int] = None
+                date_str = r.get("release_date") or r.get("first_air_date")
+                if date_str:
+                    try:
+                        year = int(date_str[:4])
+                    except (ValueError, IndexError):
+                        pass
+                poster_path = r.get("poster_path")
+                poster_url = TMDBClient.poster_url(poster_path) if poster_path else None
+
+                results.append(SearchResultOut(
+                    source="tmdb",
+                    media_type=r_type,
+                    tmdb_id=r_tmdb_id,
+                    local_id=None,
+                    show_id=None,
+                    title=title,
+                    year=year,
+                    poster_url=poster_url,
+                    has_history=False,
+                ))
+        except Exception:
+            pass  # TMDB failure degrades gracefully
+
+    return SearchOut(results=results[:limit], tmdb_enabled=cfg.tmdb_enabled)
+
+
+# ---------------------------------------------------------------------------
+# GET /tmdb/movie/{tmdb_id}
+# ---------------------------------------------------------------------------
+@router.get("/tmdb/movie/{tmdb_id}", response_model=TMDBMovieOut)
+async def get_tmdb_movie(
+    tmdb_id: int,
+    db: Session = Depends(get_db),
+    tmdb: "TMDBClient" = Depends(get_tmdb_client),  # type: ignore[name-defined]
+) -> TMDBMovieOut:
+    """Cached TMDB movie detail. Auto-tracks in recently_viewed."""
+    from logsaga.api.manual import _upsert_recently_viewed
+
+    data = await tmdb.movie_detail(tmdb_id)
+
+    # Find local match
+    local_item = db.query(MediaItem).filter_by(
+        media_type=MediaType.movie, tmdb_id=str(tmdb_id)
+    ).first()
+    local_id = local_item.id if local_item else None
+
+    genres = [g.get("name", "") for g in data.get("genres", [])]
+
+    director: Optional[str] = None
+    for person in data.get("credits", {}).get("crew", []):
+        if person.get("job") == "Director":
+            director = person.get("name")
+            break
+
+    cast = [
+        TMDBPersonOut(name=p["name"], character=p.get("character"))
+        for p in data.get("credits", {}).get("cast", [])[:10]
+    ]
+
+    poster_url = tmdb.poster_url(data.get("poster_path"))
+    backdrop_url = tmdb.backdrop_url(data.get("backdrop_path"))
+
+    # Track in recently_viewed (only when not already in local library)
+    if local_id is None:
+        _upsert_recently_viewed(
+            db,
+            media_type="movie",
+            tmdb_id=tmdb_id,
+            title=data.get("title", ""),
+            poster_url=poster_url,
+        )
+        db.commit()
+
+    return TMDBMovieOut(
+        tmdb_id=tmdb_id,
+        title=data.get("title", ""),
+        overview=data.get("overview") or None,
+        release_date=data.get("release_date") or None,
+        runtime=data.get("runtime"),
+        genres=genres,
+        poster_url=poster_url,
+        backdrop_url=backdrop_url,
+        vote_average=data.get("vote_average"),
+        director=director,
+        cast=cast,
+        local_id=local_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /tmdb/tv/{tmdb_id}
+# ---------------------------------------------------------------------------
+@router.get("/tmdb/tv/{tmdb_id}", response_model=TMDBTVOut)
+async def get_tmdb_tv(
+    tmdb_id: int,
+    db: Session = Depends(get_db),
+    tmdb: "TMDBClient" = Depends(get_tmdb_client),  # type: ignore[name-defined]
+) -> TMDBTVOut:
+    """Cached TMDB TV show detail. Auto-tracks in recently_viewed."""
+    from logsaga.api.manual import _upsert_recently_viewed
+
+    data = await tmdb.tv_detail(tmdb_id)
+
+    local_show = db.query(KodiShow).filter_by(tmdb_id=str(tmdb_id)).first()
+    local_show_id = local_show.id if local_show else None
+
+    genres = [g.get("name", "") for g in data.get("genres", [])]
+
+    seasons = [
+        TMDBSeasonSummaryOut(
+            season=s.get("season_number", 0),
+            title=s.get("name", f"Season {s.get('season_number', 0)}"),
+            episode_count=s.get("episode_count", 0),
+            air_date=s.get("air_date") or None,
+            poster_url=tmdb.poster_url(s.get("poster_path")),
+        )
+        for s in data.get("seasons", [])
+    ]
+
+    cast = [
+        TMDBPersonOut(name=p["name"], character=p.get("character"))
+        for p in data.get("credits", {}).get("cast", [])[:10]
+    ]
+
+    poster_url = tmdb.poster_url(data.get("poster_path"))
+    backdrop_url = tmdb.backdrop_url(data.get("backdrop_path"))
+
+    if local_show_id is None:
+        _upsert_recently_viewed(
+            db,
+            media_type="tv",
+            tmdb_id=tmdb_id,
+            title=data.get("name", ""),
+            poster_url=poster_url,
+        )
+        db.commit()
+
+    return TMDBTVOut(
+        tmdb_id=tmdb_id,
+        title=data.get("name", ""),
+        overview=data.get("overview") or None,
+        first_air_date=data.get("first_air_date") or None,
+        status=data.get("status") or None,
+        genres=genres,
+        poster_url=poster_url,
+        backdrop_url=backdrop_url,
+        vote_average=data.get("vote_average"),
+        seasons=seasons,
+        cast=cast,
+        local_show_id=local_show_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /tmdb/tv/{tmdb_id}/season/{season_number}
+# ---------------------------------------------------------------------------
+@router.get("/tmdb/tv/{tmdb_id}/season/{season_number}", response_model=TMDBSeasonOut)
+async def get_tmdb_season(
+    tmdb_id: int,
+    season_number: int,
+    db: Session = Depends(get_db),
+    tmdb: "TMDBClient" = Depends(get_tmdb_client),  # type: ignore[name-defined]
+) -> TMDBSeasonOut:
+    """Cached TMDB season detail with episode list."""
+    data = await tmdb.season_detail(tmdb_id, season_number)
+
+    local_show = db.query(KodiShow).filter_by(tmdb_id=str(tmdb_id)).first()
+    local_show_id = local_show.id if local_show else None
+
+    episodes = [
+        TMDBEpisodeOut(
+            season=ep.get("season_number", season_number),
+            episode=ep.get("episode_number", 0),
+            title=ep.get("name", ""),
+            overview=ep.get("overview") or None,
+            air_date=ep.get("air_date") or None,
+            runtime=ep.get("runtime"),
+            still_url=tmdb.poster_url(ep.get("still_path"), size="w300") if ep.get("still_path") else None,
+        )
+        for ep in data.get("episodes", [])
+    ]
+
+    return TMDBSeasonOut(
+        tmdb_id=tmdb_id,
+        season=season_number,
+        title=data.get("name", f"Season {season_number}"),
+        overview=data.get("overview") or None,
+        air_date=data.get("air_date") or None,
+        poster_url=tmdb.poster_url(data.get("poster_path")),
+        episodes=episodes,
+        local_show_id=local_show_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /recently-viewed
+# ---------------------------------------------------------------------------
+@router.get("/recently-viewed", response_model=list[RecentlyViewedOut])
+def get_recently_viewed(
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> list[RecentlyViewedOut]:
+    """Recently browsed TMDB pages (items not yet added to local history)."""
+    rows = (
+        db.query(RecentlyViewed)
+        .order_by(RecentlyViewed.viewed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [RecentlyViewedOut.model_validate(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# POST /watched — manual watch history
+# ---------------------------------------------------------------------------
+@router.post("/watched", response_model=PostWatchedOut)
+async def post_watched(
+    body: PostWatchedIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    cfg: Settings = Depends(get_cfg),
+) -> PostWatchedOut:
+    """
+    Manually add one or more items to watch history.
+
+    Items are created as completed WatchSession rows with source=manual.
+    New items (not yet in local DB) are fetched from TMDB and artwork is
+    downloaded asynchronously.
+    """
+    from logsaga.api.manual import create_manual_sessions
+    from logsaga.tmdb.client import TMDBClient
+
+    tmdb_client = (
+        TMDBClient(api_key=cfg.tmdb_api_key, db=db)
+        if cfg.tmdb_enabled
+        else None
+    )
+
+    # Fire-and-forget artwork for new items
+    engine = request.app.state.engine
+    def _schedule_artwork(item_id: int) -> None:
+        from logsaga.artwork.cache import fetch_artwork_for_item_async
+        from sqlalchemy.orm import sessionmaker as _sm
+        async def _run():
+            with _sm(bind=engine)() as art_db:
+                art_item = art_db.get(MediaItem, item_id)
+                if art_item:
+                    await fetch_artwork_for_item_async(art_item, art_db, cfg)
+        asyncio.create_task(_run())
+
+    return await create_manual_sessions(
+        db=db,
+        items=body.items,
+        tmdb_client=tmdb_client,
+        schedule_artwork=_schedule_artwork,
+    )

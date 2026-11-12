@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useShowDetail } from '@/api/queries'
+import type { WatchedItemIn } from '@/api/queries'
+import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { PercentBar } from '@/components/shared/PercentBar'
 import { KodiStateBadge } from '@/components/shared/KodiStateBadge'
@@ -12,7 +14,8 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { Badge } from '@/components/ui/badge'
-import { Check, ChevronDown, ChevronRight, Tv } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { BookmarkPlus, Check, ChevronDown, ChevronRight, Tv } from 'lucide-react'
 import { formatEpisode } from '@/lib/format'
 
 export const Route = createFileRoute('/shows_/$showId')({
@@ -24,6 +27,7 @@ function ShowDetailPage() {
   const id = parseInt(showId, 10)
   const { data: show, isLoading, isError } = useShowDetail(id)
   const [openSeasons, setOpenSeasons] = useState<Record<number, boolean>>({})
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
 
   const toggleSeason = (seasonNum: number) =>
     setOpenSeasons(prev => ({ ...prev, [seasonNum]: !prev[seasonNum] }))
@@ -111,6 +115,22 @@ function ShowDetailPage() {
               <Badge variant="secondary" className="text-xs">TMDB {show.tmdb_id}</Badge>
             )}
           </div>
+
+          {/* Add unwatched episodes to history */}
+          {show.tmdb_id && (() => {
+            const unwatched = show.seasons
+              .filter(s => s.season > 0)
+              .flatMap(s => s.episodes.filter(e => !e.watched).map(e => ({ s, e })))
+            if (unwatched.length === 0) return null
+            return (
+              <div className="mt-3">
+                <Button variant="outline" size="sm" onClick={() => setAddDialogOpen(true)}>
+                  <BookmarkPlus size={14} className="mr-1.5" />
+                  Add {unwatched.length} Unwatched to History
+                </Button>
+              </div>
+            )
+          })()}
         </div>
       </div>
 
@@ -210,6 +230,44 @@ function ShowDetailPage() {
               </span>
             </p>
           </div>
+        )
+      })()}
+
+      {/* Add to History dialog */}
+      {show.tmdb_id && (() => {
+        const tmdbIdNum = parseInt(show.tmdb_id!, 10)
+        const items: WatchedItemIn[] = show.seasons
+          .filter(s => s.season > 0)
+          .flatMap(s => s.episodes
+            .filter(e => !e.watched)
+            .map(e => ({
+              media_type: 'episode' as const,
+              tmdb_id: tmdbIdNum,
+              season: s.season,
+              episode: e.episode,
+              watched_at: '',
+            }))
+          )
+        const releaseDates = new Map<string, string>()
+        let missingReleaseDates = 0
+        for (const s of show.seasons.filter(s => s.season > 0)) {
+          for (const e of s.episodes.filter(e => !e.watched)) {
+            if (e.release_date) {
+              releaseDates.set(`${s.season}-${e.episode}`, e.release_date)
+            } else {
+              missingReleaseDates++
+            }
+          }
+        }
+        return (
+          <AddToHistoryDialog
+            open={addDialogOpen}
+            onOpenChange={setAddDialogOpen}
+            items={items}
+            releaseDates={releaseDates}
+            missingReleaseDates={missingReleaseDates}
+            label={`Add ${items.length} Episodes to History`}
+          />
         )
       })()}
     </div>
