@@ -191,6 +191,12 @@ and `/config/artwork` by default, which map to your appdata volume.
 
 ### Step 4A — Start with docker compose (recommended for first deploy)
 
+> **⚠️ Important for new installs:** Start the server **after** running Step 5 (backfill),
+> not before. If the server polls Kodi before backfill has run, it creates all history
+> observations with **today's** timestamp instead of the correct historical `lastPlayed`
+> dates. The recommended sequence is: start the container → immediately run the import
+> commands in Step 5 → then let the server serve normal traffic.
+
 ```bash
 cd /mnt/user/appdata/logsaga-src
 
@@ -226,6 +232,10 @@ equivalent.
 ---
 
 ### Step 5 — First-run data import
+
+**Run these immediately after Step 4**, before the server has had time to do more than
+a few poll cycles. The import commands use Kodi's historical `lastPlayed` dates — if
+the poll loop has already run extensively, some observations will show today's date.
 
 The app starts polling immediately, but your existing history needs to be imported
 from Kodi's `playCount` / `lastPlayed` data. Run these once, in order:
