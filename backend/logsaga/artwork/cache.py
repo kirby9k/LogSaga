@@ -511,6 +511,112 @@ async def fetch_artwork_for_item_async(
     return updated
 
 
+async def fetch_tmdb_artwork_async(item: MediaItem, db: Session, cfg: Settings) -> int:
+    """
+    Download artwork for a TMDB-only item (no Kodi connection required).
+
+    Processes Artwork rows that were pre-created with a TMDB source_url but no
+    local_path. Returns the number of rows updated.
+    """
+    pending = (
+        db.query(Artwork)
+        .filter(
+            Artwork.media_item_id == item.id,
+            Artwork.local_path.is_(None),
+            Artwork.source_url.like("https://%"),
+        )
+        .all()
+    )
+    if not pending:
+        return 0
+
+    artwork_dir: Path = cfg.artwork_dir
+    max_px: int = cfg.artwork_thumbnail_max_px
+    updated = 0
+
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+        for art in pending:
+            if art.art_type not in _ALLOWED_ART_TYPES:
+                continue
+
+            is_show_art = (
+                art.art_type.startswith("tvshow.")
+                and item.media_type == "episode"
+                and bool(item.show_title)
+            )
+
+            if is_show_art:
+                show_safe = _show_title_safe(item.show_title)  # type: ignore[arg-type]
+                stem = _art_type_safe(art.art_type)
+                save_dir = artwork_dir / "shows" / show_safe
+
+                # Filesystem dedup: if another episode already downloaded this show art, reuse it
+                if save_dir.exists():
+                    matches = [f for f in save_dir.glob(f"{stem}.*") if "_thumb" not in f.name]
+                    if matches:
+                        canon = matches[0]
+                        thumb_name = f"{stem}_thumb.webp"
+                        thumb_abs = save_dir / thumb_name
+                        _upsert_artwork(
+                            db, item.id, art.art_type, art.source_url,
+                            local_path=str(canon.relative_to(artwork_dir)),
+                            thumbnail_path=str(Path("shows") / show_safe / thumb_name) if thumb_abs.exists() else None,
+                            file_size=canon.stat().st_size,
+                            fetch_error=None,
+                        )
+                        updated += 1
+                        continue
+            else:
+                stem = _art_type_safe(art.art_type)
+                save_dir = artwork_dir / item.media_type / str(item.id)
+
+            try:
+                resp = await client.get(art.source_url)
+                resp.raise_for_status()
+                data = resp.content
+                if len(data) < _MIN_FILE_BYTES:
+                    continue
+
+                ext = _guess_extension(art.source_url, resp.headers.get("content-type", ""))
+                save_dir.mkdir(parents=True, exist_ok=True)
+                dest = save_dir / f"{stem}{ext}"
+                dest.write_bytes(data)
+
+                rel_path = str(dest.relative_to(artwork_dir))
+                thumb_rel: Optional[str] = None
+                if max_px > 0:
+                    thumb_name = f"{stem}_thumb.webp"
+                    thumb_abs = save_dir / thumb_name
+                    if _make_thumbnail(data, thumb_abs, max_px):
+                        if is_show_art:
+                            thumb_rel = str(Path("shows") / show_safe / thumb_name)  # type: ignore[possibly-undefined]
+                        else:
+                            thumb_rel = str(Path(item.media_type) / str(item.id) / thumb_name)
+
+                _upsert_artwork(
+                    db, item.id, art.art_type, art.source_url,
+                    local_path=rel_path,
+                    thumbnail_path=thumb_rel,
+                    file_size=len(data),
+                    fetch_error=None,
+                )
+                updated += 1
+
+            except Exception as exc:
+                logger.warning("TMDB artwork download failed item=%d %s: %s", item.id, art.art_type, exc)
+                _upsert_artwork(
+                    db, item.id, art.art_type, art.source_url,
+                    local_path=None,
+                    thumbnail_path=None,
+                    file_size=None,
+                    fetch_error=str(exc),
+                )
+
+    if updated:
+        db.commit()
+    return updated
+
+
 def fetch_all_artwork(
     kodi_conn,
     rpc: Optional[KodiJSONRPC],

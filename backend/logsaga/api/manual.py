@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from logsaga.api.schemas import PostWatchedOut, WatchedItemIn
 from logsaga.models import (
+    Artwork,
     CompletionReason,
     KodiShow,
     KodiState,
@@ -33,6 +34,17 @@ logger = structlog.get_logger(__name__)
 
 # Window within which a duplicate completed session is ignored (1 hour)
 _DEDUP_WINDOW = timedelta(hours=1)
+
+
+def _add_artwork_stubs(db: Session, item_id: int, urls: dict[str, Optional[str]]) -> None:
+    """Create pending Artwork rows so fetch_tmdb_artwork_async can download them later."""
+    for art_type, url in urls.items():
+        if not url:
+            continue
+        exists = db.query(Artwork).filter_by(media_item_id=item_id, art_type=art_type).first()
+        if not exists:
+            db.add(Artwork(media_item_id=item_id, art_type=art_type, source_url=url))
+    db.flush()
 
 
 def _find_or_create_show(
@@ -128,6 +140,12 @@ def _find_or_create_movie(
     )
     db.add(item)
     db.flush()
+
+    _add_artwork_stubs(db, item.id, {
+        "poster": TMDBClient.poster_url(movie_data.get("poster_path")),
+        "fanart": TMDBClient.backdrop_url(movie_data.get("backdrop_path")),
+    })
+
     return item
 
 
@@ -181,6 +199,13 @@ def _find_or_create_episode(
     )
     db.add(item)
     db.flush()
+
+    _add_artwork_stubs(db, item.id, {
+        "thumb": TMDBClient.poster_url(ep_data.get("still_path"), size="w300"),
+        "tvshow.poster": TMDBClient.poster_url(tv_data.get("poster_path")),
+        "tvshow.fanart": TMDBClient.backdrop_url(tv_data.get("backdrop_path")),
+    })
+
     return item
 
 
@@ -318,6 +343,8 @@ async def create_manual_sessions(
 
                 db.add(_make_session(item, watched_at))
                 created += 1
+                if item.kodi_media_id is None:
+                    item.kodi_state = KodiState.watched
 
                 if is_new and schedule_artwork:
                     schedule_artwork(item.id)
@@ -395,6 +422,8 @@ async def create_manual_sessions(
 
                 db.add(_make_session(item, watched_at))
                 created += 1
+                if item.kodi_media_id is None:
+                    item.kodi_state = KodiState.watched
 
                 if is_new and schedule_artwork:
                     schedule_artwork(item.id)
