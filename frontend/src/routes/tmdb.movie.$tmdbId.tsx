@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTMDBMovie } from '@/api/queries'
 import type { WatchedItemIn } from '@/api/queries'
+import { CastRow } from '@/components/shared/CastRow'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -9,6 +10,7 @@ import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { BookmarkPlus, ChevronRight, Film, Star } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/tmdb/movie/$tmdbId')({
   component: TMDBMoviePage,
@@ -25,6 +27,12 @@ function TMDBMoviePage() {
 
   const year = movie.release_date ? new Date(movie.release_date).getFullYear() : null
   const runtime = movie.runtime ? `${movie.runtime}m` : null
+  const heroSrc = movie.backdrop_url ?? null
+
+  // Filter to cast members that have a TMDB person id (needed for actor page links)
+  const castWithIds = movie.cast.filter(
+    (p): p is typeof p & { tmdb_person_id: number } => p.tmdb_person_id != null,
+  )
 
   const items: WatchedItemIn[] = [{
     media_type: 'movie',
@@ -42,22 +50,28 @@ function TMDBMoviePage() {
         <span className="text-foreground font-medium line-clamp-1">{movie.title}</span>
       </nav>
 
-      {/* Backdrop */}
-      {movie.backdrop_url && (
-        <div className="relative -mx-4 md:-mx-6 mb-6 max-h-64 overflow-hidden bg-muted">
-          <img
-            src={movie.backdrop_url}
-            alt=""
-            className="w-full object-cover opacity-70"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
+      {/* Hero backdrop — full-bleed, with title overlay */}
+      {heroSrc && (
+        <div className="relative -mx-4 md:-mx-6 h-52 md:h-72 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
+          <div className="absolute bottom-4 left-4 md:left-6 right-4">
+            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-md">{movie.title}</h1>
+            {year && <p className="text-sm text-white/80 drop-shadow">{year}</p>}
+          </div>
         </div>
       )}
 
-      {/* Header: poster + metadata */}
-      <div className="flex gap-6 mb-8">
-        <div className="flex-shrink-0 w-32 sm:w-44">
-          <div className="rounded-lg overflow-hidden aspect-[2/3] bg-muted">
+      {/* Poster + metadata row */}
+      <div className={cn(
+        'flex gap-4 md:gap-6 mb-8',
+        heroSrc ? '-mt-14 md:-mt-20 items-end' : 'items-start',
+      )}>
+        <div className={cn(
+          'shrink-0',
+          heroSrc ? 'w-24 md:w-36 relative z-10' : 'w-32 sm:w-44',
+        )}>
+          <div className="rounded-lg overflow-hidden aspect-[2/3] bg-muted shadow-lg">
             <MediaPoster
               src={movie.poster_url ?? null}
               alt={movie.title}
@@ -67,11 +81,14 @@ function TMDBMoviePage() {
           </div>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold leading-tight mb-2">{movie.title}</h1>
+        <div className={cn('flex-1 min-w-0', heroSrc && 'pb-2')}>
+          {/* Title only shown when no hero */}
+          {!heroSrc && (
+            <h1 className="text-2xl font-bold leading-tight mb-2">{movie.title}</h1>
+          )}
 
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground mb-3">
-            {year && <span>{year}</span>}
+            {!heroSrc && year && <span>{year}</span>}
             {runtime && <span>{runtime}</span>}
             {movie.vote_average != null && (
               <span className="flex items-center gap-1">
@@ -118,21 +135,9 @@ function TMDBMoviePage() {
         </div>
       </div>
 
-      {/* Cast */}
-      {movie.cast.length > 0 && (
-        <div>
-          <h2 className="text-base font-semibold mb-2">Cast</h2>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {movie.cast.slice(0, 10).map(p => (
-              <span key={p.name} className="text-sm">
-                {p.name}
-                {p.character && (
-                  <span className="text-xs text-muted-foreground"> as {p.character}</span>
-                )}
-              </span>
-            ))}
-          </div>
-        </div>
+      {/* Cast with portrait images */}
+      {castWithIds.length > 0 && (
+        <CastRow cast={castWithIds} />
       )}
 
       <AddToHistoryDialog

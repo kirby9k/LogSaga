@@ -224,6 +224,17 @@ export interface paths {
       };
     };
   };
+  "/api/actors/{tmdb_person_id}": {
+    get: {
+      parameters: {
+        path: { tmdb_person_id: number };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["ActorDetailOut"] } };
+        404: { content: { "application/json": components["schemas"]["HTTPValidationError"] } };
+      };
+    };
+  };
 }
 
 export interface components {
@@ -301,6 +312,7 @@ export interface components {
       artwork: components["schemas"]["ArtworkOut"][];
       sessions: components["schemas"]["SessionOut"][];
       observations: components["schemas"]["ObservationOut"][];
+      cast: components["schemas"]["CastMemberOut"][];
     };
 
     RecentItemOut: {
@@ -349,6 +361,7 @@ export interface components {
       watched: boolean;
       plot?: string | null;
       thumb_url?: string | null;
+      last_session_at?: string | null;
     };
 
     SeasonSummaryOut: {
@@ -377,6 +390,7 @@ export interface components {
       fanart_url?: string | null;
       logo_url?: string | null;
       seasons: components["schemas"]["SeasonSummaryOut"][];
+      cast: components["schemas"]["CastMemberOut"][];
     };
 
     RecentlyAddedItemOut: {
@@ -513,11 +527,46 @@ export interface components {
       tmdb_enabled: boolean;
     };
 
+    // --- Cast members ---
+    CastMemberOut: {
+      tmdb_person_id: number;
+      name: string;
+      character?: string | null;
+      credit_order: number;
+      profile_url?: string | null;
+    };
+
+    ActorAppearanceOut: {
+      media_type: string;        // "movie" or "tv"
+      title: string;
+      item_id?: number | null;   // media_item.id for movies
+      show_id?: number | null;   // kodi_show.id for TV shows
+      character?: string | null;
+      total_episodes?: number | null;
+      watched_episodes?: number | null;
+      watched: boolean;
+      last_watched_at?: string | null;
+      poster_url?: string | null;
+    };
+
+    ActorDetailOut: {
+      tmdb_person_id: number;
+      name: string;
+      biography?: string | null;
+      birthday?: string | null;
+      birthplace?: string | null;
+      profile_url?: string | null;
+      watched_items: components["schemas"]["ActorAppearanceOut"][];
+      library_items: components["schemas"]["ActorAppearanceOut"][];
+    };
+
     // --- TMDB detail ---
     TMDBPersonOut: {
       name: string;
       job?: string | null;
       character?: string | null;
+      tmdb_person_id?: number | null;
+      profile_url?: string | null;
     };
 
     TMDBEpisodeOut: {

@@ -3,6 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useShowDetail } from '@/api/queries'
 import type { WatchedItemIn } from '@/api/queries'
 import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
+import { CastRow } from '@/components/shared/CastRow'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { PercentBar } from '@/components/shared/PercentBar'
 import { KodiStateBadge } from '@/components/shared/KodiStateBadge'
@@ -16,7 +17,9 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BookmarkPlus, Check, ChevronDown, ChevronRight, Tv } from 'lucide-react'
+import { format, parseISO } from 'date-fns'
 import { formatEpisode } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/shows_/$showId')({
   component: ShowDetailPage,
@@ -39,6 +42,15 @@ function ShowDetailPage() {
     ? (show.watched_episodes / show.total_episodes) * 100
     : 0
 
+  const heroSrc = show.fanart_url ?? null
+
+  // Recently played episodes (have last_session_at), sorted newest first
+  const recentEpisodes = show.seasons
+    .flatMap(s => s.episodes.map(e => ({ ...e, season: s.season })))
+    .filter(e => e.last_session_at != null)
+    .sort((a, b) => (b.last_session_at! > a.last_session_at! ? 1 : -1))
+    .slice(0, 5)
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       {/* Breadcrumb */}
@@ -51,10 +63,30 @@ function ShowDetailPage() {
         <span className="text-foreground font-medium line-clamp-1">{show.show_title}</span>
       </nav>
 
-      {/* Header: poster + metadata */}
-      <div className="flex gap-6 mb-8">
-        <div className="flex-shrink-0 w-32 sm:w-44">
-          <div className="rounded-lg overflow-hidden aspect-[2/3] bg-muted">
+      {/* Hero backdrop — full-bleed, with show title overlay */}
+      {heroSrc && (
+        <div className="relative -mx-4 md:-mx-6 h-52 md:h-72 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
+          <div className="absolute bottom-4 left-4 md:left-6 right-4">
+            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-md">{show.show_title}</h1>
+            {show.year && (
+              <p className="text-sm text-white/80 drop-shadow">{show.year}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Poster + metadata row */}
+      <div className={cn(
+        'flex gap-4 md:gap-6 mb-8',
+        heroSrc ? '-mt-14 md:-mt-20 items-end' : 'items-start',
+      )}>
+        <div className={cn(
+          'shrink-0',
+          heroSrc ? 'w-24 md:w-36 relative z-10' : 'w-32 sm:w-44',
+        )}>
+          <div className="rounded-lg overflow-hidden aspect-[2/3] bg-muted shadow-lg">
             <MediaPoster
               src={show.poster_url}
               alt={show.show_title}
@@ -64,15 +96,23 @@ function ShowDetailPage() {
           </div>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-start gap-2 mb-1">
-            <h1 className="text-2xl font-bold leading-tight">{show.show_title}</h1>
-            <KodiStateBadge state={show.kodi_state} />
-          </div>
+        <div className={cn('flex-1 min-w-0', heroSrc && 'pb-2')}>
+          {/* Show title — only shown when no hero */}
+          {!heroSrc && (
+            <div className="flex flex-wrap items-start gap-2 mb-1">
+              <h1 className="text-2xl font-bold leading-tight">{show.show_title}</h1>
+              <KodiStateBadge state={show.kodi_state} />
+            </div>
+          )}
+          {heroSrc && (
+            <div className="mb-1">
+              <KodiStateBadge state={show.kodi_state} />
+            </div>
+          )}
 
           {/* Meta row */}
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground mb-3">
-            {show.year && <span>{show.year}</span>}
+            {!heroSrc && show.year && <span>{show.year}</span>}
             {show.premiered && show.premiered !== show.year?.toString() && (
               <span>Premiered {show.premiered}</span>
             )}
@@ -133,6 +173,13 @@ function ShowDetailPage() {
           })()}
         </div>
       </div>
+
+      {/* Cast */}
+      {show.cast.length > 0 && (
+        <div className="mb-8">
+          <CastRow cast={show.cast} />
+        </div>
+      )}
 
       {/* Seasons — accordion */}
       <h2 className="text-lg font-semibold mb-4">Seasons</h2>
@@ -232,6 +279,43 @@ function ShowDetailPage() {
           </div>
         )
       })()}
+
+      {/* Recently Played episodes */}
+      {recentEpisodes.length > 0 && (
+        <section className="mt-8">
+          <h3 className="text-base font-semibold mb-3">Recently Played</h3>
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {recentEpisodes.map(ep => (
+              <Link
+                key={ep.id}
+                to="/items/$itemId"
+                params={{ itemId: String(ep.id) }}
+                className="shrink-0 w-40 group"
+              >
+                <div className="aspect-video rounded bg-muted overflow-hidden mb-1 relative">
+                  {ep.thumb_url ? (
+                    <img
+                      src={ep.thumb_url}
+                      alt={ep.title}
+                      className="w-full h-full object-cover group-hover:opacity-90 transition"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-muted" />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
+                  <div className="absolute bottom-1 left-1.5 right-1.5">
+                    <p className="text-white text-xs font-medium line-clamp-1">{ep.title}</p>
+                    <p className="text-white/70 text-xs">{formatEpisode(ep.season, ep.episode)}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {format(parseISO(ep.last_session_at!), 'd MMM')}
+                </p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Add to History dialog */}
       {show.tmdb_id && (() => {

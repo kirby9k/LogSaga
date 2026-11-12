@@ -3,6 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useItem, useHideSession } from '@/api/queries'
 import type { WatchedItemIn } from '@/api/queries'
 import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
+import { CastRow } from '@/components/shared/CastRow'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { PercentBar } from '@/components/shared/PercentBar'
@@ -32,6 +33,7 @@ import { BookmarkPlus, ChevronDown, Trash2 } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { formatEpisode, formatDate, formatRuntime } from '@/lib/format'
 import { KODI_STATE_LABELS, COMPLETION_REASON_LABELS } from '@/lib/constants'
+import { cn } from '@/lib/utils'
 import type { components } from '@/api/types'
 
 type SessionOut = components['schemas']['SessionOut']
@@ -103,53 +105,89 @@ function ItemDetailPage() {
   )
   const posterSrc = posterArt?.local_path ? `/art/${posterArt.local_path}` : null
 
-  // Episode screencap (16:9) shown separately below the info block
+  // Episode screencap (16:9) shown below the info block
   const thumbArt = data.media_type === 'episode'
     ? data.artwork.find(a => a.art_type === 'thumb')
     : null
 
-  // Fanart (16:9) shown below the episode thumb
+  // Fanart becomes the hero backdrop
   const fanartArt = data.artwork.find(a =>
     a.art_type === (data.media_type === 'episode' ? 'tvshow.fanart' : 'fanart')
   )
+  const heroSrc = fanartArt?.local_path ? `/art/${fanartArt.local_path}` : null
 
   return (
     <div className="p-4 md:p-6">
-      <PageHeader title={data.show_title ?? data.title} />
+      {/* Hero backdrop — full-bleed, with title overlay */}
+      {heroSrc && (
+        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-52 md:h-72 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
+          <div className="absolute bottom-4 left-4 md:left-6 right-4">
+            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-md">{displayTitle}</h1>
+            {data.show_title && data.media_type === 'episode' && (
+              data.show_id ? (
+                <Link
+                  to="/shows/$showId"
+                  params={{ showId: String(data.show_id) }}
+                  className="text-sm text-white/80 drop-shadow hover:text-white transition-colors"
+                >
+                  {data.show_title}
+                </Link>
+              ) : (
+                <p className="text-sm text-white/80 drop-shadow">{data.show_title}</p>
+              )
+            )}
+          </div>
+        </div>
+      )}
 
-      {/* Two-column layout on desktop */}
-      <div className="flex flex-col md:flex-row gap-6">
+      {/* Title — only shown when there's no hero */}
+      {!heroSrc && <PageHeader title={data.show_title ?? data.title} />}
+
+      {/* Poster + info row */}
+      <div className={cn(
+        'flex gap-4 md:gap-6',
+        heroSrc ? '-mt-14 md:-mt-20 items-end' : 'flex-col md:flex-row',
+      )}>
         {/* Poster */}
-        <div className="shrink-0 w-full md:w-48">
-          <div className="overflow-hidden rounded-lg aspect-[2/3] bg-muted md:w-48">
-            <MediaPoster
-              src={posterSrc}
-              alt={data.title}
-              className="w-full h-full"
-            />
+        <div className={cn(
+          'shrink-0',
+          heroSrc
+            ? 'w-24 md:w-36 relative z-10'
+            : 'w-full md:w-48',
+        )}>
+          <div className={cn(
+            'overflow-hidden rounded-lg aspect-[2/3] bg-muted shadow-lg',
+            !heroSrc && 'md:w-48',
+          )}>
+            <MediaPoster src={posterSrc} alt={data.title} className="w-full h-full" />
           </div>
         </div>
 
         {/* Info */}
-        <div className="flex-1 min-w-0 space-y-4">
-          <div>
-            <h2 className="text-xl font-semibold">{displayTitle}</h2>
-            {data.show_title && data.media_type === 'episode' && (
-              <p className="text-muted-foreground">
-                {data.show_id ? (
-                  <Link
-                    to="/shows/$showId"
-                    params={{ showId: String(data.show_id) }}
-                    className="hover:text-foreground hover:underline transition-colors"
-                  >
-                    {data.show_title}
-                  </Link>
-                ) : (
-                  data.show_title
-                )}
-              </p>
-            )}
-          </div>
+        <div className={cn('flex-1 min-w-0 space-y-4', heroSrc && 'pb-2')}>
+          {/* Title — only shown when there's no hero */}
+          {!heroSrc && (
+            <div>
+              <h2 className="text-xl font-semibold">{displayTitle}</h2>
+              {data.show_title && data.media_type === 'episode' && (
+                <p className="text-muted-foreground">
+                  {data.show_id ? (
+                    <Link
+                      to="/shows/$showId"
+                      params={{ showId: String(data.show_id) }}
+                      className="hover:text-foreground hover:underline transition-colors"
+                    >
+                      {data.show_title}
+                    </Link>
+                  ) : (
+                    data.show_title
+                  )}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2 items-center">
             <Badge variant="outline">{data.media_type === 'episode' ? 'TV' : 'Movie'}</Badge>
@@ -245,23 +283,19 @@ function ItemDetailPage() {
         </div>
       </div>
 
+      {/* Cast */}
+      {data.cast.length > 0 && (
+        <div className="mt-6">
+          <CastRow cast={data.cast} />
+        </div>
+      )}
+
       {/* Episode screencap — 16:9, shown below the info block */}
       {thumbArt?.local_path && (
         <div className="mt-6 aspect-video overflow-hidden rounded-lg bg-muted">
           <img
             src={`/art/${thumbArt.local_path}`}
             alt="Episode thumbnail"
-            className="w-full h-full object-cover"
-          />
-        </div>
-      )}
-
-      {/* Fanart — 16:9, shown after episode thumb and before Viewing History */}
-      {fanartArt?.local_path && (
-        <div className="mt-6 aspect-video overflow-hidden rounded-lg bg-muted">
-          <img
-            src={`/art/${fanartArt.local_path}`}
-            alt="Background art"
             className="w-full h-full object-cover"
           />
         </div>

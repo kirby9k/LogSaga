@@ -119,6 +119,7 @@ class MediaItemDetailOut(_Base):
     artwork: list[ArtworkOut] = []
     sessions: list[SessionOut] = []         # newest first
     observations: list[ObservationOut] = [] # newest first
+    cast: list[CastMemberOut] = []          # top 20 cast members (lazy-populated)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ class EpisodeSummaryOut(BaseModel):
     watched: bool                        # has at least one completed session
     plot: Optional[str] = None
     thumb_url: Optional[str] = None
+    last_session_at: Optional[UTCDatetime] = None  # most recent completed session time
 
 
 class SeasonSummaryOut(BaseModel):
@@ -210,6 +212,7 @@ class ShowDetailOut(BaseModel):
     fanart_url: Optional[str] = None
     logo_url: Optional[str] = None
     seasons: list[SeasonSummaryOut] = []
+    cast: list[CastMemberOut] = []          # top 20 cast members (lazy-populated)
 
 
 # ---------------------------------------------------------------------------
@@ -377,10 +380,49 @@ class SearchOut(BaseModel):
 # ---------------------------------------------------------------------------
 # TMDB detail responses (sourced from TMDB API, cached in tmdb_cache)
 # ---------------------------------------------------------------------------
+class CastMemberOut(BaseModel):
+    """Cast member on a local item or show (populated from tmdb_cache)."""
+    tmdb_person_id: int
+    name: str
+    character: Optional[str] = None
+    credit_order: int
+    profile_url: Optional[str] = None  # TMDB CDN URL
+
+
+class ActorAppearanceOut(BaseModel):
+    """One movie or show entry on an actor's profile page."""
+    media_type: str                    # "movie" or "tv"
+    title: str
+    item_id: Optional[int] = None      # media_item.id for movies
+    show_id: Optional[int] = None      # kodi_show.id for TV shows
+    character: Optional[str] = None
+    # TV shows
+    total_episodes: Optional[int] = None
+    watched_episodes: Optional[int] = None
+    # Movies
+    watched: bool = False
+    last_watched_at: Optional[UTCDatetime] = None
+    poster_url: Optional[str] = None
+
+
+class ActorDetailOut(BaseModel):
+    """Full actor profile (GET /api/actors/{tmdb_person_id})."""
+    tmdb_person_id: int
+    name: str
+    biography: Optional[str] = None
+    birthday: Optional[str] = None
+    birthplace: Optional[str] = None
+    profile_url: Optional[str] = None
+    watched_items: list[ActorAppearanceOut] = []
+    library_items: list[ActorAppearanceOut] = []
+
+
 class TMDBPersonOut(BaseModel):
     name: str
-    job: Optional[str] = None    # for crew
-    character: Optional[str] = None  # for cast
+    job: Optional[str] = None           # for crew
+    character: Optional[str] = None     # for cast
+    tmdb_person_id: Optional[int] = None   # TMDB person ID
+    profile_url: Optional[str] = None      # TMDB CDN portrait URL
 
 
 class TMDBEpisodeOut(BaseModel):

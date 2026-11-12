@@ -19,6 +19,7 @@ import { Route as RecentlyViewedRouteImport } from './routes/recently-viewed'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ShowsRouteImport } from './routes/shows'
 import { Route as StatsRouteImport } from './routes/stats'
+import { Route as ActorsActorIdRouteImport } from './routes/actors.$actorId'
 import { Route as ItemsItemIdRouteImport } from './routes/items/$itemId'
 import { Route as ShowsShowIdRouteImport } from './routes/shows_.$showId'
 import { Route as TmdbMovieTmdbIdRouteImport } from './routes/tmdb.movie.$tmdbId'
@@ -76,6 +77,11 @@ const StatsRoute = StatsRouteImport.update({
   path: '/stats',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ActorsActorIdRoute = ActorsActorIdRouteImport.update({
+  id: '/actors/$actorId',
+  path: '/actors/$actorId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ItemsItemIdRoute = ItemsItemIdRouteImport.update({
   id: '/items/$itemId',
   path: '/items/$itemId',
@@ -120,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/shows': typeof ShowsRoute
   '/stats': typeof StatsRoute
+  '/actors/$actorId': typeof ActorsActorIdRoute
   '/items/$itemId': typeof ItemsItemIdRoute
   '/shows/$showId': typeof ShowsShowIdRouteWithChildren
   '/tmdb/movie/$tmdbId': typeof TmdbMovieTmdbIdRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/shows': typeof ShowsRoute
   '/stats': typeof StatsRoute
+  '/actors/$actorId': typeof ActorsActorIdRoute
   '/items/$itemId': typeof ItemsItemIdRoute
   '/shows/$showId': typeof ShowsShowIdRouteWithChildren
   '/tmdb/movie/$tmdbId': typeof TmdbMovieTmdbIdRoute
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/shows': typeof ShowsRoute
   '/stats': typeof StatsRoute
+  '/actors/$actorId': typeof ActorsActorIdRoute
   '/items/$itemId': typeof ItemsItemIdRoute
   '/shows_/$showId': typeof ShowsShowIdRouteWithChildren
   '/tmdb/movie/$tmdbId': typeof TmdbMovieTmdbIdRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shows'
     | '/stats'
+    | '/actors/$actorId'
     | '/items/$itemId'
     | '/shows/$showId'
     | '/tmdb/movie/$tmdbId'
@@ -195,6 +205,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shows'
     | '/stats'
+    | '/actors/$actorId'
     | '/items/$itemId'
     | '/shows/$showId'
     | '/tmdb/movie/$tmdbId'
@@ -213,6 +224,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shows'
     | '/stats'
+    | '/actors/$actorId'
     | '/items/$itemId'
     | '/shows_/$showId'
     | '/tmdb/movie/$tmdbId'
@@ -232,6 +244,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   ShowsRoute: typeof ShowsRoute
   StatsRoute: typeof StatsRoute
+  ActorsActorIdRoute: typeof ActorsActorIdRoute
   ItemsItemIdRoute: typeof ItemsItemIdRoute
   ShowsShowIdRoute: typeof ShowsShowIdRouteWithChildren
   TmdbMovieTmdbIdRoute: typeof TmdbMovieTmdbIdRoute
@@ -308,6 +321,13 @@ declare module '@tanstack/react-router' {
       path: '/stats'
       fullPath: '/stats'
       preLoaderRoute: typeof StatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/actors/$actorId': {
+      id: '/actors/$actorId'
+      path: '/actors/$actorId'
+      fullPath: '/actors/$actorId'
+      preLoaderRoute: typeof ActorsActorIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/items/$itemId': {
@@ -390,6 +410,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   ShowsRoute: ShowsRoute,
   StatsRoute: StatsRoute,
+  ActorsActorIdRoute: ActorsActorIdRoute,
   ItemsItemIdRoute: ItemsItemIdRoute,
   ShowsShowIdRoute: ShowsShowIdRouteWithChildren,
   TmdbMovieTmdbIdRoute: TmdbMovieTmdbIdRoute,

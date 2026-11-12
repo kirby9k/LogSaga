@@ -4,6 +4,7 @@ import { useQueries } from '@tanstack/react-query'
 import { useTMDBTV } from '@/api/queries'
 import type { WatchedItemIn } from '@/api/queries'
 import { apiClient } from '@/api/client'
+import { CastRow } from '@/components/shared/CastRow'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -11,6 +12,7 @@ import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { BookmarkPlus, ChevronRight, Loader2, Star, Tv } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { components } from '@/api/types'
 
 type TMDBSeasonOut = components['schemas']['TMDBSeasonOut']
@@ -96,6 +98,12 @@ function TMDBTVPage() {
   if (isError || !show) return <div className="p-4 md:p-6"><ErrorState message="Show not found on TMDB." /></div>
 
   const year = show.first_air_date ? show.first_air_date.slice(0, 4) : null
+  const heroSrc = show.backdrop_url ?? null
+
+  // Filter to cast members that have a TMDB person id (needed for actor page links)
+  const castWithIds = show.cast.filter(
+    (p): p is typeof p & { tmdb_person_id: number } => p.tmdb_person_id != null,
+  )
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -107,22 +115,28 @@ function TMDBTVPage() {
         <span className="text-foreground font-medium line-clamp-1">{show.title}</span>
       </nav>
 
-      {/* Backdrop */}
-      {show.backdrop_url && (
-        <div className="relative -mx-4 md:-mx-6 mb-6 max-h-64 overflow-hidden bg-muted">
-          <img
-            src={show.backdrop_url}
-            alt=""
-            className="w-full object-cover opacity-70"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
+      {/* Hero backdrop — full-bleed, with title overlay */}
+      {heroSrc && (
+        <div className="relative -mx-4 md:-mx-6 h-52 md:h-72 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
+          <div className="absolute bottom-4 left-4 md:left-6 right-4">
+            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-md">{show.title}</h1>
+            {year && <p className="text-sm text-white/80 drop-shadow">{year}</p>}
+          </div>
         </div>
       )}
 
-      {/* Header: poster + metadata */}
-      <div className="flex gap-6 mb-8">
-        <div className="flex-shrink-0 w-32 sm:w-44">
-          <div className="rounded-lg overflow-hidden aspect-[2/3] bg-muted">
+      {/* Poster + metadata row */}
+      <div className={cn(
+        'flex gap-4 md:gap-6 mb-8',
+        heroSrc ? '-mt-14 md:-mt-20 items-end' : 'items-start',
+      )}>
+        <div className={cn(
+          'shrink-0',
+          heroSrc ? 'w-24 md:w-36 relative z-10' : 'w-32 sm:w-44',
+        )}>
+          <div className="rounded-lg overflow-hidden aspect-[2/3] bg-muted shadow-lg">
             <MediaPoster
               src={show.poster_url ?? null}
               alt={show.title}
@@ -132,11 +146,14 @@ function TMDBTVPage() {
           </div>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold leading-tight mb-2">{show.title}</h1>
+        <div className={cn('flex-1 min-w-0', heroSrc && 'pb-2')}>
+          {/* Title only shown when no hero */}
+          {!heroSrc && (
+            <h1 className="text-2xl font-bold leading-tight mb-2">{show.title}</h1>
+          )}
 
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground mb-3">
-            {year && <span>{year}</span>}
+            {!heroSrc && year && <span>{year}</span>}
             {show.status && (
               <Badge variant="outline" className="text-xs">{show.status}</Badge>
             )}
@@ -191,6 +208,13 @@ function TMDBTVPage() {
         </div>
       </div>
 
+      {/* Cast with portrait images */}
+      {castWithIds.length > 0 && (
+        <div className="mb-8">
+          <CastRow cast={castWithIds} />
+        </div>
+      )}
+
       {/* Season list */}
       <h2 className="text-lg font-semibold mb-4">Seasons</h2>
       <div className="space-y-2">
@@ -220,23 +244,6 @@ function TMDBTVPage() {
           </Link>
         ))}
       </div>
-
-      {/* Cast */}
-      {show.cast.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-base font-semibold mb-2">Cast</h2>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {show.cast.slice(0, 10).map(p => (
-              <span key={p.name} className="text-sm">
-                {p.name}
-                {p.character && (
-                  <span className="text-xs text-muted-foreground"> as {p.character}</span>
-                )}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Full show add dialog */}
       <AddToHistoryDialog

@@ -17,12 +17,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from logsaga.api.deps import get_cfg, get_db, get_tmdb_client
+from logsaga.api.deps import get_cfg, get_db, get_tmdb_client, get_tmdb_client_optional
 from logsaga.api.schemas import (
+    ActorAppearanceOut,
+    ActorDetailOut,
     AdminSettingsIn,
     AdminSettingsOut,
     ArtworkOut,
     ArtworkStatusOut,
+    CastMemberOut,
     DailyStatOut,
     EpisodeSummaryOut,
     HealthOut,
@@ -61,11 +64,13 @@ from logsaga.config import Settings
 from logsaga.models import (
     AppSetting,
     Artwork,
+    ItemCast,
     KodiObservation,
     KodiShow,
     KodiState,
     MediaItem,
     MediaType,
+    Person,
     RecentlyViewed,
     SessionStatus,
     SyncState,
@@ -594,6 +599,21 @@ def get_show(
         )
     )
 
+    # Build a map of episode_id → most recent completed session time
+    all_ep_ids = [ep.id for ep in episodes]
+    last_session_at_by_ep: dict[int, Any] = {}
+    if all_ep_ids:
+        rows = (
+            db.query(WatchSession.media_item_id, func.max(WatchSession.completed_at))
+            .filter(
+                WatchSession.status == SessionStatus.completed,
+                WatchSession.media_item_id.in_(all_ep_ids),
+            )
+            .group_by(WatchSession.media_item_id)
+            .all()
+        )
+        last_session_at_by_ep = {r[0]: r[1] for r in rows}
+
     # Group episodes by season
     seasons_dict: dict[int, list[MediaItem]] = {}
     for ep in episodes:
@@ -624,6 +644,7 @@ def get_show(
                 watched=ep.id in watched_ids,
                 plot=ep.plot,
                 thumb_url=thumb_url,
+                last_session_at=last_session_at_by_ep.get(ep.id),
             ))
 
         watched_in_season = sum(1 for e in eps if e.id in watched_ids)
@@ -665,6 +686,9 @@ def get_show(
 
     state_val = show.kodi_state.value if hasattr(show.kodi_state, "value") else show.kodi_state
 
+    from logsaga.api.cast import populate_cast_for_show
+    cast = populate_cast_for_show(show, db)
+
     return ShowDetailOut(
         show_id=show.id,
         show_title=show.title,
@@ -684,6 +708,7 @@ def get_show(
         fanart_url=fanart_url,
         logo_url=logo_url,
         seasons=seasons_out,
+        cast=cast,
     )
 
 
@@ -855,6 +880,9 @@ def get_item(
     sessions_sorted = sorted(item.sessions, key=lambda s: s.started_at, reverse=True)
     obs_sorted = sorted(item.observations, key=lambda o: o.observed_at, reverse=True)
 
+    from logsaga.api.cast import populate_cast_for_item
+    cast = populate_cast_for_item(item, db)
+
     return MediaItemDetailOut(
         id=item.id,
         media_type=item.media_type,
@@ -884,6 +912,7 @@ def get_item(
         artwork=[ArtworkOut.model_validate(a) for a in item.artwork],
         sessions=[SessionOut.model_validate(s) for s in sessions_sorted],
         observations=[ObservationOut.model_validate(o) for o in obs_sorted],
+        cast=cast,
     )
 
 
@@ -1813,8 +1842,17 @@ async def get_tmdb_movie(
             break
 
     cast = [
-        TMDBPersonOut(name=p["name"], character=p.get("character"))
-        for p in data.get("credits", {}).get("cast", [])[:10]
+        TMDBPersonOut(
+            name=p["name"],
+            character=p.get("character"),
+            tmdb_person_id=p.get("id"),
+            profile_url=(
+                f"https://image.tmdb.org/t/p/w185{p['profile_path']}"
+                if p.get("profile_path")
+                else None
+            ),
+        )
+        for p in data.get("credits", {}).get("cast", [])[:20]
     ]
 
     poster_url = tmdb.poster_url(data.get("poster_path"))
@@ -1878,8 +1916,17 @@ async def get_tmdb_tv(
     ]
 
     cast = [
-        TMDBPersonOut(name=p["name"], character=p.get("character"))
-        for p in data.get("credits", {}).get("cast", [])[:10]
+        TMDBPersonOut(
+            name=p["name"],
+            character=p.get("character"),
+            tmdb_person_id=p.get("id"),
+            profile_url=(
+                f"https://image.tmdb.org/t/p/w185{p['profile_path']}"
+                if p.get("profile_path")
+                else None
+            ),
+        )
+        for p in data.get("credits", {}).get("cast", [])[:20]
     ]
 
     poster_url = tmdb.poster_url(data.get("poster_path"))
@@ -2014,3 +2061,213 @@ async def post_watched(
         tmdb_client=tmdb_client,
         schedule_artwork=_schedule_artwork,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /actors/{tmdb_person_id}
+# ---------------------------------------------------------------------------
+@router.get("/actors/{tmdb_person_id}", response_model=ActorDetailOut)
+async def get_actor(
+    tmdb_person_id: int,
+    db: Session = Depends(get_db),
+    tmdb: Optional["TMDBClient"] = Depends(get_tmdb_client_optional),  # type: ignore[name-defined]
+) -> ActorDetailOut:
+    """Actor profile: biography + all watched/library appearances.
+
+    The person must already be in the local DB (populated lazily when any
+    item detail page is visited).  Returns 404 if the actor is unknown.
+    """
+    person = db.get(Person, tmdb_person_id)
+    if person is None:
+        raise HTTPException(status_code=404, detail="Actor not found in local database")
+
+    # Lazily fetch biography from TMDB if not yet loaded
+    if person.fetched_at is None and tmdb is not None:
+        try:
+            bio_data = await tmdb.person_detail(tmdb_person_id)
+            person.biography = bio_data.get("biography") or None
+            person.birthday = bio_data.get("birthday") or None
+            person.birthplace = bio_data.get("place_of_birth") or None
+            person.fetched_at = datetime.utcnow()
+            db.commit()
+        except Exception as exc:
+            log.warning("Failed to fetch biography for person %d: %s", tmdb_person_id, exc)
+
+    watched_items = _build_actor_appearances(tmdb_person_id, db, watched_only=True)
+    library_items = _build_actor_appearances(
+        tmdb_person_id,
+        db,
+        watched_only=False,
+        exclude_show_ids={a.show_id for a in watched_items if a.show_id},
+        exclude_item_ids={a.item_id for a in watched_items if a.item_id},
+    )
+
+    profile_url = (
+        f"https://image.tmdb.org/t/p/w342{person.profile_path}"
+        if person.profile_path
+        else None
+    )
+
+    return ActorDetailOut(
+        tmdb_person_id=tmdb_person_id,
+        name=person.name,
+        biography=person.biography,
+        birthday=person.birthday,
+        birthplace=person.birthplace,
+        profile_url=profile_url,
+        watched_items=watched_items,
+        library_items=library_items,
+    )
+
+
+def _build_actor_appearances(
+    tmdb_person_id: int,
+    db: Session,
+    watched_only: bool,
+    exclude_show_ids: Optional[set] = None,
+    exclude_item_ids: Optional[set] = None,
+) -> list[ActorAppearanceOut]:
+    """Build the list of TV show and movie appearances for an actor.
+
+    TV shows are grouped at the show level (not per-episode).
+    Movies are individual media_item rows.
+    """
+    result: list[ActorAppearanceOut] = []
+
+    # --- TV shows ---
+    show_rows = (
+        db.query(
+            KodiShow.id,
+            KodiShow.title,
+            ItemCast.character,
+        )
+        .join(ItemCast, ItemCast.show_id == KodiShow.id)
+        .filter(ItemCast.person_id == tmdb_person_id)
+        .all()
+    )
+
+    for show_id_val, show_title, character in show_rows:
+        if exclude_show_ids and show_id_val in exclude_show_ids:
+            continue
+
+        # Count total episodes in library for this show
+        total_eps = (
+            db.query(func.count(MediaItem.id))
+            .filter(
+                MediaItem.show_id == show_id_val,
+                MediaItem.media_type == MediaType.episode,
+            )
+            .scalar()
+            or 0
+        )
+
+        # Count watched episodes
+        watched_eps = (
+            db.query(func.count(func.distinct(WatchSession.media_item_id)))
+            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+            .filter(
+                MediaItem.show_id == show_id_val,
+                WatchSession.status == SessionStatus.completed,
+            )
+            .scalar()
+            or 0
+        )
+
+        last_watched_at = (
+            db.query(func.max(WatchSession.completed_at))
+            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+            .filter(
+                MediaItem.show_id == show_id_val,
+                WatchSession.status == SessionStatus.completed,
+            )
+            .scalar()
+        )
+
+        if watched_only and last_watched_at is None:
+            continue
+
+        # Poster: look for tvshow.poster on any episode of this show
+        poster_art = (
+            db.query(Artwork)
+            .join(MediaItem, Artwork.media_item_id == MediaItem.id)
+            .filter(
+                MediaItem.show_id == show_id_val,
+                Artwork.art_type == "tvshow.poster",
+                Artwork.local_path.isnot(None),
+            )
+            .first()
+        )
+        poster_url = f"/art/{poster_art.local_path}" if poster_art else None
+
+        result.append(
+            ActorAppearanceOut(
+                media_type="tv",
+                title=show_title,
+                show_id=show_id_val,
+                character=character,
+                total_episodes=total_eps,
+                watched_episodes=watched_eps,
+                watched=watched_eps > 0,
+                last_watched_at=last_watched_at,
+                poster_url=poster_url,
+            )
+        )
+
+    # --- Movies ---
+    movie_rows = (
+        db.query(
+            MediaItem.id,
+            MediaItem.title,
+            ItemCast.character,
+        )
+        .join(ItemCast, ItemCast.media_item_id == MediaItem.id)
+        .filter(
+            ItemCast.person_id == tmdb_person_id,
+            MediaItem.media_type == MediaType.movie,
+        )
+        .all()
+    )
+
+    for item_id_val, movie_title, character in movie_rows:
+        if exclude_item_ids and item_id_val in exclude_item_ids:
+            continue
+
+        last_watched_at = (
+            db.query(func.max(WatchSession.completed_at))
+            .filter(
+                WatchSession.media_item_id == item_id_val,
+                WatchSession.status == SessionStatus.completed,
+            )
+            .scalar()
+        )
+
+        if watched_only and last_watched_at is None:
+            continue
+
+        # Poster
+        poster_art = (
+            db.query(Artwork)
+            .filter(
+                Artwork.media_item_id == item_id_val,
+                Artwork.art_type == "poster",
+                Artwork.local_path.isnot(None),
+            )
+            .first()
+        )
+        poster_url = f"/art/{poster_art.local_path}" if poster_art else None
+
+        result.append(
+            ActorAppearanceOut(
+                media_type="movie",
+                title=movie_title,
+                item_id=item_id_val,
+                character=character,
+                watched=last_watched_at is not None,
+                last_watched_at=last_watched_at,
+                poster_url=poster_url,
+            )
+        )
+
+    # Sort: most recently watched first
+    result.sort(key=lambda x: x.last_watched_at or datetime.min, reverse=True)
+    return result

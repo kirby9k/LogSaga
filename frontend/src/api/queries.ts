@@ -22,6 +22,7 @@ export const QK = {
   recentlyAdded: (params: RecentlyAddedParams) => ['recentlyAdded', params] as const,
   item: (id: number) => ['item', id] as const,
   stats: (days: number) => ['stats', days] as const,
+  actor: (tmdbPersonId: number) => ['actor', tmdbPersonId] as const,
 } as const
 
 // ---------------------------------------------------------------------------
@@ -525,5 +526,23 @@ export function usePostWatched() {
       queryClient.invalidateQueries({ queryKey: ['recentlyViewed'] })
       queryClient.invalidateQueries({ queryKey: QK.inProgress })
     },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/actors/{tmdb_person_id}
+// ---------------------------------------------------------------------------
+export function useActor(tmdbPersonId: number | null) {
+  return useQuery({
+    queryKey: QK.actor(tmdbPersonId!),
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET(
+        '/api/actors/{tmdb_person_id}' as never,
+        { params: { path: { tmdb_person_id: tmdbPersonId! } } } as never,
+      )
+      return assertOk(data as unknown as import('./types').components['schemas']['ActorDetailOut'], error)
+    },
+    enabled: tmdbPersonId !== null,
+    staleTime: 60 * 60_000,  // 1 hour (biography changes rarely)
   })
 }

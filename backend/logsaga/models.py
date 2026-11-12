@@ -406,6 +406,72 @@ class Artwork(Base):
 
 
 # ---------------------------------------------------------------------------
+# person — TMDB person (actor/crew) identity and portrait
+# ---------------------------------------------------------------------------
+class Person(Base):
+    __tablename__ = "person"
+
+    tmdb_person_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # TMDB relative profile path, e.g. "/abc123.jpg"
+    profile_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Local downloaded portrait (relative to artwork_dir)
+    profile_local_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    profile_thumb_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Biography fields (fetched lazily via TMDB /person/{id})
+    biography: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    birthday: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # YYYY-MM-DD
+    birthplace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+    # Relationships
+    cast_appearances: Mapped[list["ItemCast"]] = relationship(
+        back_populates="person", cascade="all, delete-orphan"
+    )
+
+
+# ---------------------------------------------------------------------------
+# item_cast — junction between Person and media_item/kodi_show
+# TV shows link via show_id; movies link via media_item_id
+# ---------------------------------------------------------------------------
+class ItemCast(Base):
+    __tablename__ = "item_cast"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    person_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("person.tmdb_person_id"), nullable=False
+    )
+    # Exactly one of these is set per row (movie → media_item_id, TV → show_id)
+    media_item_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("media_item.id"), nullable=True
+    )
+    show_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("kodi_show.id"), nullable=True
+    )
+
+    character: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    credit_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Relationships
+    person: Mapped["Person"] = relationship(back_populates="cast_appearances")
+
+    __table_args__ = (
+        # One entry per (person, movie item) and per (person, show)
+        UniqueConstraint("person_id", "media_item_id", name="uq_item_cast_person_movie"),
+        UniqueConstraint("person_id", "show_id", name="uq_item_cast_person_show"),
+        Index("ix_item_cast_person_id", "person_id"),
+        Index("ix_item_cast_media_item_id", "media_item_id"),
+        Index("ix_item_cast_show_id", "show_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # tmdb_cache — 30-day TTL JSON cache for TMDB API responses
 # ---------------------------------------------------------------------------
 class TMDBCache(Base):

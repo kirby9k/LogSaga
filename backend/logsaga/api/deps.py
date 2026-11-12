@@ -7,7 +7,7 @@ Routes obtain a Session via get_db() and Settings via get_cfg().
 
 from __future__ import annotations
 
-from typing import Generator
+from typing import Generator, Optional
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session, sessionmaker
@@ -45,4 +45,20 @@ def get_tmdb_client(
             status_code=503,
             detail="TMDB integration not configured. Set TMDB_API_KEY in your environment.",
         )
+    return TMDBClient(api_key=cfg.tmdb_api_key, db=db)
+
+
+def get_tmdb_client_optional(
+    cfg: Settings = Depends(get_cfg),
+    db: Session = Depends(get_db),
+) -> "Optional[TMDBClient]":  # type: ignore[name-defined]  # noqa: F821
+    """Return a TMDBClient instance, or None if TMDB is not configured.
+
+    Use for endpoints where TMDB access is a nice-to-have (e.g. biography
+    fetching) but the endpoint can still return useful data without it.
+    """
+    from logsaga.tmdb.client import TMDBClient
+
+    if not cfg.tmdb_enabled:
+        return None
     return TMDBClient(api_key=cfg.tmdb_api_key, db=db)
