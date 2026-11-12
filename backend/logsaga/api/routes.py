@@ -7,8 +7,11 @@ All routes are mounted under the /api prefix by main.py.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
+log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
@@ -1775,8 +1778,8 @@ async def search(
                     poster_url=poster_url,
                     has_history=False,
                 ))
-        except Exception:
-            pass  # TMDB failure degrades gracefully
+        except Exception as exc:
+            log.warning("TMDB search failed (results degraded to local only): %s", exc)
 
     return SearchOut(results=results[:limit], tmdb_enabled=cfg.tmdb_enabled)
 

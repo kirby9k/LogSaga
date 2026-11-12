@@ -1,8 +1,11 @@
 """
 TMDB API client with SQLite-backed caching.
 
-Uses TMDB API v3 with a Read Access Token (Bearer auth).
-Get a free token at https://www.themoviedb.org/settings/api
+Supports both TMDB authentication methods:
+  - v3 API Key (short 32-char hex string) — passed as ?api_key= query param
+  - Read Access Token (long JWT starting with eyJ) — passed as Bearer header
+
+Both are available at https://www.themoviedb.org/settings/api
 
 Cache TTLs:
   Detail responses (movie, TV show, season): 30 days
@@ -33,12 +36,19 @@ class TMDBClient:
     """Async TMDB API client with DB-backed caching."""
 
     def __init__(self, api_key: str, db: Session) -> None:
-        self._api_key = api_key
         self._db = db
-        self._headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-        }
+        # Read Access Tokens are long JWTs (start with "eyJ").
+        # v3 API Keys are short hex strings (~32 chars).
+        # Use the right auth method for whichever was configured.
+        if api_key.startswith("eyJ"):
+            self._bearer_token: str | None = api_key
+            self._api_key_param: str | None = None
+        else:
+            self._bearer_token = None
+            self._api_key_param = api_key
+        self._headers = {"Accept": "application/json"}
+        if self._bearer_token:
+            self._headers["Authorization"] = f"Bearer {self._bearer_token}"
 
     # ------------------------------------------------------------------
     # Public methods
@@ -120,6 +130,8 @@ class TMDBClient:
             return json.loads(cached.data_json)
 
         # Cache miss or expired — fetch from TMDB
+        if self._api_key_param:
+            params = {**params, "api_key": self._api_key_param}
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{TMDB_BASE_URL}{path}",
