@@ -22,6 +22,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from logsaga.api.schemas import CastMemberOut
@@ -143,11 +144,13 @@ def _insert_cast(
 ) -> list[CastMemberOut]:
     """Insert Person + ItemCast rows from TMDB credits JSON.
 
+    Uses INSERT OR IGNORE (ON CONFLICT DO NOTHING) so duplicate persons
+    — from concurrent sessions or duplicate entries in TMDB's own cast data
+    — are silently skipped rather than failing the entire batch.
+
     Stores up to _CAST_STORE_LIMIT cast members; returns up to _CAST_RETURN_LIMIT.
-    Uses check-before-insert to avoid IntegrityError / rollback complexity.
     """
     result: list[CastMemberOut] = []
-
     raw_cast = data.get("credits", {}).get("cast", [])[:_CAST_STORE_LIMIT]
 
     for order, p in enumerate(raw_cast):
@@ -155,51 +158,37 @@ def _insert_cast(
         if not pid:
             continue
 
-        # Upsert Person — only create if not already known
-        person = db.get(Person, pid)
-        if person is None:
-            person = Person(
+        # INSERT OR IGNORE: safe if person already exists in DB (concurrent insert
+        # from another session, or the same person appearing twice in TMDB cast data).
+        db.execute(
+            sqlite_insert(Person.__table__).values(
                 tmdb_person_id=pid,
                 name=p.get("name", ""),
                 profile_path=p.get("profile_path"),
                 created_at=datetime.utcnow(),
-            )
-            db.add(person)
+            ).on_conflict_do_nothing(index_elements=["tmdb_person_id"])
+        )
 
-        # Check for existing ItemCast row before inserting
-        if media_item_id is not None:
-            existing_ic = (
-                db.query(ItemCast)
-                .filter(ItemCast.person_id == pid, ItemCast.media_item_id == media_item_id)
-                .first()
-            )
-        else:
-            existing_ic = (
-                db.query(ItemCast)
-                .filter(ItemCast.person_id == pid, ItemCast.show_id == show_id)
-                .first()
-            )
-
-        if existing_ic is None:
-            db.add(
-                ItemCast(
-                    person_id=pid,
-                    media_item_id=media_item_id,
-                    show_id=show_id,
-                    character=p.get("character"),
-                    credit_order=order,
-                )
-            )
+        # INSERT OR IGNORE: safe if this (person, item/show) pair already exists.
+        db.execute(
+            sqlite_insert(ItemCast.__table__).values(
+                person_id=pid,
+                media_item_id=media_item_id,
+                show_id=show_id,
+                character=p.get("character"),
+                credit_order=order,
+            ).on_conflict_do_nothing()
+        )
 
         profile_url = (
-            f"https://image.tmdb.org/t/p/w185{person.profile_path}"
-            if person.profile_path
+            f"https://image.tmdb.org/t/p/w185{p['profile_path']}"
+            if p.get("profile_path")
             else None
         )
         result.append(
             CastMemberOut(
                 tmdb_person_id=pid,
-                name=person.name,
+                name=p.get("name", ""),
                 character=p.get("character"),
                 credit_order=order,
                 profile_url=profile_url,

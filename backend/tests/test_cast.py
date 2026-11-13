@@ -254,6 +254,27 @@ class TestPopulateCastForItemMovie:
         assert len(persons) == 2
         assert {p.tmdb_person_id for p in persons} == {1000, 1001}
 
+    def test_duplicate_person_in_tmdb_cast_no_crash(self, db_session):
+        """TMDB sometimes lists the same person twice — INSERT OR IGNORE must not raise."""
+        movie = _make_movie(db_session)
+        cast_with_dup = [
+            {"id": 1663786, "name": "Ellie Ricker", "character": "Role A", "order": 0, "profile_path": None},
+            {"id": 1663786, "name": "Ellie Ricker", "character": "Role B", "order": 1, "profile_path": None},
+        ]
+        _make_tmdb_movie_cache(db_session, "12345", cast_with_dup)
+        db_session.commit()
+
+        result = populate_cast_for_item(movie, db_session)  # must not raise
+
+        # Person inserted once, second INSERT OR IGNORE'd
+        persons = db_session.query(Person).all()
+        assert len(persons) == 1
+        # ItemCast inserted once, second INSERT OR IGNORE'd
+        item_casts = db_session.query(ItemCast).filter_by(media_item_id=movie.id).all()
+        assert len(item_casts) == 1
+        # Both occurrences still appear in the return list
+        assert len(result) == 2
+
 
 # ---------------------------------------------------------------------------
 # Tests: populate_cast_for_item (episode)
