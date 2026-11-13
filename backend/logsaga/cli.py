@@ -9,12 +9,15 @@ Commands:
   rebuild-sessions Delete all sessions and rebuild from observations
   fetch-artwork    Download artwork for all (or one) media items
   enrich-cast      Fetch TMDB credits and populate cast for all library items
+  enrich-tmdb-ids  Search TMDB to fill in missing tmdb_ids by title + year
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -1083,3 +1086,208 @@ def enrich_cast(
     typer.echo(f"\nDone.")
     typer.echo(f"  Shows enriched:   {shows_done}")
     typer.echo(f"  Movies enriched:  {movies_done}")
+
+
+# ---------------------------------------------------------------------------
+# enrich-tmdb-ids helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_title(title: str) -> str:
+    """Lowercase ASCII, replace punctuation with spaces, collapse whitespace."""
+    title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
+    title = re.sub(r"[^\w\s]", " ", title.lower())
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def _pick_movie_match(results: list[dict], local_title: str, local_year: int | None) -> int | None:
+    """Return the TMDB ID of the first result that matches title and year, or None."""
+    local_norm = _normalize_title(local_title)
+    for r in results[:5]:
+        tmdb_norm = _normalize_title(r.get("title", ""))
+        tmdb_orig_norm = _normalize_title(r.get("original_title", ""))
+        if local_norm not in (tmdb_norm, tmdb_orig_norm):
+            continue
+        if local_year:
+            rd = r.get("release_date", "")
+            tmdb_year = int(rd[:4]) if rd and len(rd) >= 4 else None
+            if tmdb_year and abs(tmdb_year - local_year) > 1:
+                continue
+        return r.get("id")
+    return None
+
+
+def _pick_tv_match(results: list[dict], local_title: str, local_year: int | None) -> int | None:
+    """Return the TMDB ID of the first TV result that matches title and year, or None."""
+    local_norm = _normalize_title(local_title)
+    for r in results[:5]:
+        tmdb_norm = _normalize_title(r.get("name", ""))
+        tmdb_orig_norm = _normalize_title(r.get("original_name", ""))
+        if local_norm not in (tmdb_norm, tmdb_orig_norm):
+            continue
+        if local_year:
+            fad = r.get("first_air_date", "")
+            tmdb_year = int(fad[:4]) if fad and len(fad) >= 4 else None
+            if tmdb_year and abs(tmdb_year - local_year) > 1:
+                continue
+        return r.get("id")
+    return None
+
+
+_ENRICH_TMDB_IDS_BATCH_SIZE = 50
+
+
+async def _bulk_enrich_tmdb_ids_async(
+    movie_item_ids: list[int],
+    show_ids: list[int],
+    engine,
+    cfg,
+    concurrency: int,
+) -> tuple[int, int, int, int]:
+    """
+    Search TMDB by title+year for items missing a tmdb_id and update the DB rows.
+
+    Returns (movies_matched, shows_matched, movies_unmatched, shows_unmatched).
+    """
+    from logsaga.models import KodiShow, MediaItem
+    from logsaga.tmdb.client import TMDBClient
+
+    SessionLocal = sessionmaker(bind=engine, autoflush=False)
+    sem = asyncio.Semaphore(concurrency)
+    total = len(movie_item_ids) + len(show_ids)
+    completed_count = 0
+    movies_matched = 0
+    movies_unmatched = 0
+    shows_matched = 0
+    shows_unmatched = 0
+
+    async def resolve_movie(item_id: int) -> tuple[str, bool]:
+        async with sem:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, item_id)
+                if item is None or item.tmdb_id:
+                    return "movie", False
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    data = await tmdb.search_movie(item.title, item.year)
+                    matched_id = _pick_movie_match(data.get("results", []), item.title, item.year)
+                    if matched_id:
+                        item.tmdb_id = str(matched_id)
+                        db.commit()
+                        return "movie", True
+                    return "movie", False
+                except Exception as exc:
+                    db.rollback()
+                    typer.echo(f"  [warn] movie {item_id}: {exc}", err=True)
+                    return "movie", False
+
+    async def resolve_show(show_id: int) -> tuple[str, bool]:
+        async with sem:
+            with SessionLocal() as db:
+                show = db.get(KodiShow, show_id)
+                if show is None or show.tmdb_id:
+                    return "show", False
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    data = await tmdb.search_tv(show.title, show.year)
+                    matched_id = _pick_tv_match(data.get("results", []), show.title, show.year)
+                    if matched_id:
+                        show.tmdb_id = str(matched_id)
+                        db.commit()
+                        return "show", True
+                    return "show", False
+                except Exception as exc:
+                    db.rollback()
+                    typer.echo(f"  [warn] show {show_id}: {exc}", err=True)
+                    return "show", False
+
+    all_coros = (
+        [resolve_movie(iid) for iid in movie_item_ids]
+        + [resolve_show(sid) for sid in show_ids]
+    )
+
+    for coro in asyncio.as_completed(all_coros):
+        kind, matched = await coro
+        if kind == "movie":
+            if matched:
+                movies_matched += 1
+            else:
+                movies_unmatched += 1
+        else:
+            if matched:
+                shows_matched += 1
+            else:
+                shows_unmatched += 1
+        completed_count += 1
+        if completed_count % _ENRICH_TMDB_IDS_BATCH_SIZE == 0 or completed_count == total:
+            typer.echo(f"  {completed_count}/{total} processed...")
+
+    return movies_matched, shows_matched, movies_unmatched, shows_unmatched
+
+
+@app.command(name="enrich-tmdb-ids")
+def enrich_tmdb_ids(
+    concurrency: int = typer.Option(5, "--concurrency", help="Concurrent TMDB searches (default 5)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print counts without updating."),
+    db_path: str = typer.Option("logsaga.db", envvar="LOGSAGA_DB_PATH"),
+) -> None:
+    """
+    Search TMDB to find IDs for movies and shows missing a tmdb_id.
+
+    Searches TMDB by title + year for each item. Only assigns an ID when a
+    result's title and year match confidently. After this command, run
+    'enrich-cast' to populate actors for the newly matched items.
+
+    Idempotent: items that already have a tmdb_id are skipped.
+    Use --dry-run to see counts before searching.
+    """
+    cfg = _get_settings()
+    if not cfg.tmdb_api_key:
+        typer.echo("TMDB_API_KEY not set — cannot search TMDB.", err=True)
+        raise typer.Exit(1)
+
+    from logsaga.models import KodiShow, MediaItem
+
+    engine, SessionLocal = _get_db_session(db_path)
+
+    with SessionLocal() as db:
+        movie_item_ids = [
+            row[0]
+            for row in db.query(MediaItem.id)
+            .filter(
+                MediaItem.media_type == "movie",
+                MediaItem.tmdb_id.is_(None),
+            )
+            .order_by(MediaItem.id)
+            .all()
+        ]
+        show_ids = [
+            row[0]
+            for row in db.query(KodiShow.id)
+            .filter(KodiShow.tmdb_id.is_(None))
+            .order_by(KodiShow.id)
+            .all()
+        ]
+
+    total = len(movie_item_ids) + len(show_ids)
+    typer.echo(f"Movies without tmdb_id:  {len(movie_item_ids)}")
+    typer.echo(f"Shows without tmdb_id:   {len(show_ids)}")
+
+    if dry_run:
+        typer.echo("\n--dry-run: not searching.")
+        return
+
+    if total == 0:
+        typer.echo("\nNothing to do.")
+        return
+
+    typer.echo(f"\nSearching TMDB for {total} items (concurrency={concurrency})...")
+
+    movies_matched, shows_matched, movies_unmatched, shows_unmatched = asyncio.run(
+        _bulk_enrich_tmdb_ids_async(movie_item_ids, show_ids, engine, cfg, concurrency)
+    )
+
+    typer.echo(f"\nDone.")
+    typer.echo(f"  Movies matched:   {movies_matched}  (not matched: {movies_unmatched})")
+    typer.echo(f"  Shows matched:    {shows_matched}  (not matched: {shows_unmatched})")
+    if movies_matched + shows_matched > 0:
+        typer.echo(f"\nRun 'logsaga enrich-cast' to populate actors for the matched items.")

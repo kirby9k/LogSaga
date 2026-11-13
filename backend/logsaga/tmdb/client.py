@@ -104,6 +104,24 @@ class TMDBClient:
             DETAIL_TTL_DAYS,
         )
 
+    async def search_movie(self, title: str, year: int | None = None) -> dict:
+        """Search for a movie by title and optional release year."""
+        year_part = f":{year}" if year else ""
+        cache_key = f"search:movie:{title.lower().strip()}{year_part}"
+        params: dict = {"query": title, "language": "en-US", "page": 1}
+        if year:
+            params["year"] = year
+        return await self._get_cached(cache_key, "/search/movie", params, SEARCH_TTL_DAYS)
+
+    async def search_tv(self, title: str, year: int | None = None) -> dict:
+        """Search for a TV show by title and optional first air date year."""
+        year_part = f":{year}" if year else ""
+        cache_key = f"search:tv:{title.lower().strip()}{year_part}"
+        params: dict = {"query": title, "language": "en-US", "page": 1}
+        if year:
+            params["first_air_date_year"] = year
+        return await self._get_cached(cache_key, "/search/tv", params, SEARCH_TTL_DAYS)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
