@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useRecent, useRecentlyAdded, useDashboardStats } from '@/api/queries'
 import { MediaPoster } from '@/components/shared/MediaPoster'
@@ -133,7 +134,7 @@ function StatCard({
   label,
   value,
 }: {
-  icon: React.ReactNode
+  icon: ReactNode
   label: string
   value: number | undefined
 }) {
