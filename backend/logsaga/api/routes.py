@@ -57,6 +57,9 @@ from logsaga.api.schemas import (
     TMDBEpisodeOut,
     TMDBMovieOut,
     TMDBPersonOut,
+    ActorRecommendationsOut,
+    DashboardStatsOut,
+    TMDBDiscoveryItem,
     TMDBSeasonOut,
     TMDBSeasonSummaryOut,
     TMDBTVOut,
@@ -2182,16 +2185,33 @@ def _build_actor_appearances(
     result: list[ActorAppearanceOut] = []
 
     # --- TV shows ---
-    show_rows = (
-        db.query(
-            KodiShow.id,
-            KodiShow.title,
-            ItemCast.character,
-        )
+    # Path 1: show-level cast rows (item_cast.show_id populated by enrich-cast)
+    show_rows_direct = (
+        db.query(KodiShow.id, KodiShow.title, ItemCast.character)
         .join(ItemCast, ItemCast.show_id == KodiShow.id)
         .filter(ItemCast.person_id == tmdb_person_id)
         .all()
     )
+    # Path 2: episode-level cast rows (item_cast.media_item_id populated by enrich-episode-cast)
+    show_rows_episode = (
+        db.query(KodiShow.id, KodiShow.title, ItemCast.character)
+        .join(MediaItem, MediaItem.id == ItemCast.media_item_id)
+        .join(KodiShow, KodiShow.id == MediaItem.show_id)
+        .filter(
+            ItemCast.person_id == tmdb_person_id,
+            MediaItem.media_type == MediaType.episode,
+        )
+        .distinct()
+        .all()
+    )
+    # Merge both paths: prefer show-level character name but don't duplicate shows
+    seen_show_ids: dict[int, tuple[str, Optional[str]]] = {}
+    for sid, title, character in show_rows_direct:
+        seen_show_ids[sid] = (title, character)
+    for sid, title, character in show_rows_episode:
+        if sid not in seen_show_ids:
+            seen_show_ids[sid] = (title, character)
+    show_rows = [(sid, title, char) for sid, (title, char) in seen_show_ids.items()]
 
     for show_id_val, show_title, character in show_rows:
         if exclude_show_ids and show_id_val in exclude_show_ids:
@@ -2318,3 +2338,130 @@ def _build_actor_appearances(
     # Sort: most recently watched first
     result.sort(key=lambda x: x.last_watched_at or datetime.min, reverse=True)
     return result
+
+
+# ---------------------------------------------------------------------------
+# GET /api/actors/{tmdb_person_id}/recommendations
+# ---------------------------------------------------------------------------
+@router.get(
+    "/actors/{tmdb_person_id}/recommendations",
+    response_model=ActorRecommendationsOut,
+)
+async def get_actor_recommendations(
+    tmdb_person_id: int,
+    db: Session = Depends(get_db),
+    tmdb: Optional["TMDBClient"] = Depends(get_tmdb_client_optional),  # type: ignore[name-defined]
+) -> ActorRecommendationsOut:
+    """Return popular and recent TMDB titles featuring an actor that are NOT in the local library.
+
+    Both sections contain up to 10 items, with no duplicates between them.
+    Results are cached in tmdb_cache for 30 days.
+    """
+    from logsaga.tmdb.client import TMDBClient
+
+    if tmdb is None:
+        return ActorRecommendationsOut()
+
+    try:
+        credits_data = await tmdb.person_credits(tmdb_person_id)
+    except Exception as exc:
+        log.warning("Failed to fetch person credits for %d: %s", tmdb_person_id, exc)
+        return ActorRecommendationsOut()
+
+    # Build sets of TMDB IDs already in local library
+    local_movie_tmdb_ids: set[int] = {
+        int(r[0]) for r in db.query(MediaItem.tmdb_id).filter(
+            MediaItem.media_type == MediaType.movie,
+            MediaItem.tmdb_id.isnot(None),
+        ).all()
+    }
+    local_show_tmdb_ids: set[int] = {
+        int(r[0]) for r in db.query(KodiShow.tmdb_id).filter(
+            KodiShow.tmdb_id.isnot(None)
+        ).all()
+    }
+
+    _DISCOVERY_LIMIT = 10
+
+    def _to_discovery(entry: dict) -> TMDBDiscoveryItem | None:
+        media_type = entry.get("media_type")
+        if media_type not in ("movie", "tv"):
+            return None
+        tmdb_id = entry.get("id")
+        if not tmdb_id:
+            return None
+        # Skip library items
+        if media_type == "movie" and tmdb_id in local_movie_tmdb_ids:
+            return None
+        if media_type == "tv" and tmdb_id in local_show_tmdb_ids:
+            return None
+        title = entry.get("title") or entry.get("name") or ""
+        date_str = entry.get("release_date") or entry.get("first_air_date") or ""
+        year: int | None = None
+        try:
+            year = int(date_str[:4]) if date_str else None
+        except (ValueError, TypeError):
+            pass
+        poster_path = entry.get("poster_path")
+        return TMDBDiscoveryItem(
+            tmdb_id=tmdb_id,
+            media_type=media_type,
+            title=title,
+            poster_url=TMDBClient.poster_url(poster_path, "w342") if poster_path else None,
+            year=year,
+            popularity=entry.get("popularity"),
+        )
+
+    cast_entries = credits_data.get("cast", [])
+    items = [i for e in cast_entries if (i := _to_discovery(e)) is not None]
+
+    # Most popular: sort by popularity desc
+    popular_items = sorted(items, key=lambda x: x.popularity or 0.0, reverse=True)[:_DISCOVERY_LIMIT]
+    popular_ids = {i.tmdb_id for i in popular_items}
+
+    # Most recent: sort by year desc, skip items already in popular
+    recent_items = sorted(
+        [i for i in items if i.tmdb_id not in popular_ids],
+        key=lambda x: x.year or 0,
+        reverse=True,
+    )[:_DISCOVERY_LIMIT]
+
+    return ActorRecommendationsOut(most_popular=popular_items, most_recent=recent_items)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/dashboard/stats
+# ---------------------------------------------------------------------------
+@router.get("/dashboard/stats", response_model=DashboardStatsOut)
+def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStatsOut:
+    """Lightweight counts for the dashboard page."""
+    total_movies = (
+        db.query(func.count(MediaItem.id))
+        .filter(MediaItem.media_type == MediaType.movie, MediaItem.kodi_state != KodiState.removed)
+        .scalar() or 0
+    )
+    total_episodes = (
+        db.query(func.count(MediaItem.id))
+        .filter(MediaItem.media_type == MediaType.episode, MediaItem.kodi_state != KodiState.removed)
+        .scalar() or 0
+    )
+    total_shows = (
+        db.query(func.count(KodiShow.id)).scalar() or 0
+    )
+
+    type_counts = (
+        db.query(MediaItem.media_type, func.count(WatchSession.id).label("cnt"))
+        .join(WatchSession, WatchSession.media_item_id == MediaItem.id)
+        .filter(WatchSession.status == SessionStatus.completed)
+        .group_by(MediaItem.media_type)
+        .all()
+    )
+    type_map = {r.media_type: r.cnt for r in type_counts}
+
+    return DashboardStatsOut(
+        total_movies=total_movies,
+        total_shows=total_shows,
+        total_episodes=total_episodes,
+        movie_plays=type_map.get("movie", 0),
+        episode_plays=type_map.get("episode", 0),
+    )

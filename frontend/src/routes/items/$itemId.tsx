@@ -117,11 +117,11 @@ function ItemDetailPage() {
 
   return (
     <div className="p-4 md:p-6">
-      {/* Hero backdrop — full-bleed, letterboxed (black bars preserve aspect ratio) */}
+      {/* Hero backdrop — full-bleed cinematic banner */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-36 md:h-48 overflow-hidden bg-black">
-          <img src={heroSrc} alt="" className="w-full h-full object-contain" />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/40" />
+        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-44 md:h-64 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
         </div>
       )}
 

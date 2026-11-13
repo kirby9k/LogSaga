@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useActor } from '@/api/queries'
+import { useActor, useActorRecommendations } from '@/api/queries'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -9,6 +9,7 @@ import { format, parseISO } from 'date-fns'
 import type { components } from '@/api/types'
 
 type ActorAppearanceOut = components['schemas']['ActorAppearanceOut']
+type TMDBDiscoveryItem = components['schemas']['TMDBDiscoveryItem']
 
 export const Route = createFileRoute('/actors/$actorId')({
   component: ActorDetailPage,
@@ -18,6 +19,7 @@ function ActorDetailPage() {
   const { actorId } = Route.useParams()
   const id = parseInt(actorId, 10)
   const { data: actor, isLoading, isError } = useActor(id)
+  const { data: recommendations } = useActorRecommendations(id)
 
   if (isLoading) return <div className="p-4 md:p-6"><LoadingSkeleton count={4} variant="card" /></div>
   if (isError || !actor) return <div className="p-4 md:p-6"><ErrorState message="Actor not found." /></div>
@@ -90,6 +92,39 @@ function ActorDetailPage() {
           No items found in your library featuring this actor.
         </p>
       )}
+
+      {/* TMDB recommendations — not in local library */}
+      {recommendations && (recommendations.most_popular.length > 0 || recommendations.most_recent.length > 0) && (
+        <>
+          <Separator className="my-8" />
+
+          {recommendations.most_popular.length > 0 && (
+            <section className="mb-8">
+              <h2 className="text-lg font-semibold mb-4">Most Popular</h2>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                {recommendations.most_popular.map(item => (
+                  <DiscoveryCard key={`pop-${item.media_type}-${item.tmdb_id}`} item={item} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {recommendations.most_popular.length > 0 && recommendations.most_recent.length > 0 && (
+            <Separator className="my-6" />
+          )}
+
+          {recommendations.most_recent.length > 0 && (
+            <section>
+              <h2 className="text-lg font-semibold mb-4">Most Recent</h2>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                {recommendations.most_recent.map(item => (
+                  <DiscoveryCard key={`rec-${item.media_type}-${item.tmdb_id}`} item={item} />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -150,4 +185,26 @@ function AppearanceCard({ item }: { item: ActorAppearanceOut }) {
   }
 
   return <div>{inner}</div>
+}
+
+function DiscoveryCard({ item }: { item: TMDBDiscoveryItem }) {
+  const to = item.media_type === 'movie'
+    ? `/tmdb/movie/${item.tmdb_id}`
+    : `/tmdb/tv/${item.tmdb_id}`
+  return (
+    <Link to={to as never} className="block hover:opacity-90 transition">
+      <div className="aspect-[2/3] rounded-md overflow-hidden bg-muted mb-1">
+        <MediaPoster
+          src={item.poster_url ?? null}
+          alt={item.title}
+          className="w-full h-full"
+          fallbackLetter={item.title[0]}
+        />
+      </div>
+      <p className="text-xs font-medium line-clamp-2 leading-snug">{item.title}</p>
+      {item.year && (
+        <p className="text-xs text-muted-foreground">{item.year}</p>
+      )}
+    </Link>
+  )
 }

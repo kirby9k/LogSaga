@@ -26,6 +26,9 @@ function TMDBMoviePage() {
   if (isError || !movie) return <div className="p-4 md:p-6"><ErrorState message="Movie not found on TMDB." /></div>
 
   const year = movie.release_date ? new Date(movie.release_date).getFullYear() : null
+  const releaseDateFull = movie.release_date
+    ? (() => { try { return new Date(movie.release_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) } catch { return movie.release_date } })()
+    : null
   const runtime = movie.runtime ? `${movie.runtime}m` : null
   const heroSrc = movie.backdrop_url ?? null
 
@@ -50,11 +53,11 @@ function TMDBMoviePage() {
         <span className="text-foreground font-medium line-clamp-1">{movie.title}</span>
       </nav>
 
-      {/* Hero backdrop — full-bleed, letterboxed (black bars preserve aspect ratio) */}
+      {/* Hero backdrop — full-bleed cinematic banner */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 h-36 md:h-48 overflow-hidden bg-black">
-          <img src={heroSrc} alt="" className="w-full h-full object-contain" />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/40" />
+        <div className="relative -mx-4 md:-mx-6 h-44 md:h-64 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
         </div>
       )}
 
@@ -82,7 +85,8 @@ function TMDBMoviePage() {
           <h1 className="text-2xl font-bold leading-tight mb-2">{movie.title}</h1>
 
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground mb-3">
-            {year && <span>{year}</span>}
+            {releaseDateFull && <span>{releaseDateFull}</span>}
+            {!releaseDateFull && year && <span>{year}</span>}
             {runtime && <span>{runtime}</span>}
             {movie.vote_average != null && (
               <span className="flex items-center gap-1">

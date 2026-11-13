@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RecentRouteImport } from './routes/recent'
 import { Route as ContinueRouteImport } from './routes/continue'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as MoviesRouteImport } from './routes/movies'
@@ -30,6 +31,11 @@ import { Route as TmdbTvTmdbIdSeasonSeasonRouteImport } from './routes/tmdb.tv.$
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecentRoute = RecentRouteImport.update({
+  id: '/recent',
+  path: '/recent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ContinueRoute = ContinueRouteImport.update({
@@ -117,6 +123,7 @@ const TmdbTvTmdbIdSeasonSeasonRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/recent': typeof RecentRoute
   '/continue': typeof ContinueRoute
   '/history': typeof HistoryRoute
   '/movies': typeof MoviesRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/recent': typeof RecentRoute
   '/continue': typeof ContinueRoute
   '/history': typeof HistoryRoute
   '/movies': typeof MoviesRoute
@@ -156,6 +164,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/recent': typeof RecentRoute
   '/continue': typeof ContinueRoute
   '/history': typeof HistoryRoute
   '/movies': typeof MoviesRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/recent'
     | '/continue'
     | '/history'
     | '/movies'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/recent'
     | '/continue'
     | '/history'
     | '/movies'
@@ -215,6 +226,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/recent'
     | '/continue'
     | '/history'
     | '/movies'
@@ -235,6 +247,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  RecentRoute: typeof RecentRoute
   ContinueRoute: typeof ContinueRoute
   HistoryRoute: typeof HistoryRoute
   MoviesRoute: typeof MoviesRoute
@@ -258,6 +271,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recent': {
+      id: '/recent'
+      path: '/recent'
+      fullPath: '/recent'
+      preLoaderRoute: typeof RecentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/continue': {
@@ -401,6 +421,7 @@ const TmdbTvTmdbIdRouteWithChildren = TmdbTvTmdbIdRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  RecentRoute: RecentRoute,
   ContinueRoute: ContinueRoute,
   HistoryRoute: HistoryRoute,
   MoviesRoute: MoviesRoute,

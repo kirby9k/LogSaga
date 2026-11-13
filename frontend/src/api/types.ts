@@ -242,6 +242,23 @@ export interface paths {
       };
     };
   };
+  "/api/actors/{tmdb_person_id}/recommendations": {
+    get: {
+      parameters: {
+        path: { tmdb_person_id: number };
+      };
+      responses: {
+        200: { content: { "application/json": components["schemas"]["ActorRecommendationsOut"] } };
+      };
+    };
+  };
+  "/api/dashboard/stats": {
+    get: {
+      responses: {
+        200: { content: { "application/json": components["schemas"]["DashboardStatsOut"] } };
+      };
+    };
+  };
 }
 
 export interface components {
@@ -672,6 +689,30 @@ export interface components {
       created: number;
       skipped: number;
       errors: string[];
+    };
+
+    // --- Actor TMDB recommendations ---
+    TMDBDiscoveryItem: {
+      tmdb_id: number;
+      media_type: string;    // "movie" or "tv"
+      title: string;
+      poster_url?: string | null;
+      year?: number | null;
+      popularity?: number | null;
+    };
+
+    ActorRecommendationsOut: {
+      most_popular: components["schemas"]["TMDBDiscoveryItem"][];
+      most_recent: components["schemas"]["TMDBDiscoveryItem"][];
+    };
+
+    // --- Dashboard ---
+    DashboardStatsOut: {
+      total_movies: number;
+      total_shows: number;
+      total_episodes: number;
+      movie_plays: number;
+      episode_plays: number;
     };
   };
 }

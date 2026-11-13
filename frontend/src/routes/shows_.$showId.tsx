@@ -63,11 +63,11 @@ function ShowDetailPage() {
         <span className="text-foreground font-medium line-clamp-1">{show.show_title}</span>
       </nav>
 
-      {/* Hero backdrop — full-bleed, letterboxed (black bars preserve aspect ratio) */}
+      {/* Hero backdrop — full-bleed cinematic banner */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 h-36 md:h-48 overflow-hidden bg-black">
-          <img src={heroSrc} alt="" className="w-full h-full object-contain" />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/40" />
+        <div className="relative -mx-4 md:-mx-6 h-44 md:h-64 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
         </div>
       )}
 
@@ -133,13 +133,19 @@ function ShowDetailPage() {
           {/* External IDs */}
           <div className="flex flex-wrap gap-2 mt-3">
             {show.tvdb_id && (
-              <Badge variant="secondary" className="text-xs">TVDB {show.tvdb_id}</Badge>
+              <a href={`https://www.thetvdb.com/series/${show.tvdb_id}`} target="_blank" rel="noreferrer">
+                <Badge variant="secondary" className="text-xs hover:bg-secondary/80 cursor-pointer">TVDB {show.tvdb_id}</Badge>
+              </a>
             )}
             {show.imdb_id && (
-              <Badge variant="secondary" className="text-xs">{show.imdb_id}</Badge>
+              <a href={`https://www.imdb.com/title/${show.imdb_id}`} target="_blank" rel="noreferrer">
+                <Badge variant="secondary" className="text-xs hover:bg-secondary/80 cursor-pointer">{show.imdb_id}</Badge>
+              </a>
             )}
             {show.tmdb_id && (
-              <Badge variant="secondary" className="text-xs">TMDB {show.tmdb_id}</Badge>
+              <a href={`https://www.themoviedb.org/tv/${show.tmdb_id}`} target="_blank" rel="noreferrer">
+                <Badge variant="secondary" className="text-xs hover:bg-secondary/80 cursor-pointer">TMDB {show.tmdb_id}</Badge>
+              </a>
             )}
           </div>
 

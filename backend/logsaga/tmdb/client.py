@@ -118,6 +118,21 @@ class TMDBClient:
             DETAIL_TTL_DAYS,
         )
 
+    async def person_credits(self, tmdb_person_id: int) -> dict:
+        """Fetch combined movie + TV credits for a person.
+
+        Returns ``{"cast": [...], "crew": [...]}`` where each entry has
+        ``media_type`` ("movie" or "tv"), ``id``, ``title``/``name``,
+        ``release_date``/``first_air_date``, ``popularity``, ``poster_path``.
+        """
+        cache_key = f"person:{tmdb_person_id}:credits"
+        return await self._get_cached(
+            cache_key,
+            f"/person/{tmdb_person_id}/combined_credits",
+            {"language": "en-US"},
+            DETAIL_TTL_DAYS,
+        )
+
     async def search_movie(self, title: str, year: int | None = None) -> dict:
         """Search for a movie by title and optional release year."""
         year_part = f":{year}" if year else ""

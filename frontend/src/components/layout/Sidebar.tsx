@@ -3,6 +3,7 @@ import {
   Clock,
   Clapperboard,
   Eye,
+  Home,
   List,
   Play,
   PlusCircle,
@@ -21,7 +22,8 @@ interface SidebarProps {
 }
 
 const NAV = [
-  { to: '/',               icon: <Clock size={16} />,        label: 'Recently Played' },
+  { to: '/',               icon: <Home size={16} />,         label: 'Dashboard' },
+  { to: '/recent',         icon: <Clock size={16} />,        label: 'Recently Played' },
   { to: '/continue',       icon: <Play size={16} />,         label: 'Continue Watching' },
   { to: '/partial',        icon: <Timer size={16} />,        label: 'Started, Not Done' },
   { to: '/history',        icon: <List size={16} />,         label: 'History' },
@@ -39,11 +41,15 @@ export function Sidebar({ onClose, onSearchOpen }: SidebarProps) {
 
   return (
     <nav className="w-56 h-full bg-sidebar border-r border-sidebar-border flex flex-col">
-      {/* Logo / app name */}
+      {/* Logo / app name — links to dashboard */}
       <div className="px-4 py-5 border-b border-sidebar-border">
-        <span className="text-sm font-semibold text-sidebar-foreground tracking-wide uppercase">
+        <Link
+          to="/"
+          onClick={onClose}
+          className="text-sm font-semibold text-sidebar-foreground tracking-wide uppercase hover:text-foreground transition-colors"
+        >
           LogSAGA
-        </span>
+        </Link>
       </div>
 
       {/* Search button */}

@@ -531,3 +531,34 @@ class PostWatchedOut(BaseModel):
     created: int
     skipped: int
     errors: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Actor TMDB recommendations
+# ---------------------------------------------------------------------------
+class TMDBDiscoveryItem(BaseModel):
+    """A TMDB movie or TV show surfaced as a recommendation (not in local library)."""
+    tmdb_id: int
+    media_type: str          # "movie" or "tv"
+    title: str
+    poster_url: Optional[str] = None
+    year: Optional[int] = None
+    popularity: Optional[float] = None
+
+
+class ActorRecommendationsOut(BaseModel):
+    """TMDB credits for an actor filtered to items not in the local library."""
+    most_popular: list[TMDBDiscoveryItem] = []
+    most_recent: list[TMDBDiscoveryItem] = []
+
+
+# ---------------------------------------------------------------------------
+# Dashboard summary stats
+# ---------------------------------------------------------------------------
+class DashboardStatsOut(BaseModel):
+    """Lightweight library + history counts for the dashboard page."""
+    total_movies: int = 0
+    total_shows: int = 0
+    total_episodes: int = 0
+    movie_plays: int = 0      # completed sessions with media_type=movie
+    episode_plays: int = 0    # completed sessions with media_type=episode

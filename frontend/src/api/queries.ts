@@ -562,3 +562,41 @@ export function useActor(tmdbPersonId: number | null) {
     staleTime: 60 * 60_000,  // 1 hour (biography changes rarely)
   })
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/actors/{tmdb_person_id}/recommendations
+// ---------------------------------------------------------------------------
+export function useActorRecommendations(tmdbPersonId: number | null) {
+  return useQuery({
+    queryKey: ['actorRecommendations', tmdbPersonId] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET(
+        '/api/actors/{tmdb_person_id}/recommendations' as never,
+        { params: { path: { tmdb_person_id: tmdbPersonId! } } } as never,
+      )
+      return assertOk(
+        data as unknown as import('./types').components['schemas']['ActorRecommendationsOut'],
+        error,
+      )
+    },
+    enabled: tmdbPersonId !== null,
+    staleTime: 24 * 60 * 60_000,  // 24 h (cached 30 days server-side)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/dashboard/stats
+// ---------------------------------------------------------------------------
+export function useDashboardStats() {
+  return useQuery({
+    queryKey: ['dashboardStats'] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/dashboard/stats' as never)
+      return assertOk(
+        data as unknown as import('./types').components['schemas']['DashboardStatsOut'],
+        error,
+      )
+    },
+    staleTime: 5 * 60_000,
+  })
+}

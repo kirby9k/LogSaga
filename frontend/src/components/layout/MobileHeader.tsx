@@ -1,5 +1,6 @@
 import { Menu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Link } from '@tanstack/react-router'
 
 interface Props {
   onMenuClick: () => void
@@ -11,7 +12,9 @@ export function MobileHeader({ onMenuClick }: Props) {
       <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open menu">
         <Menu size={20} />
       </Button>
-      <span className="text-sm font-semibold tracking-wide uppercase">LogSAGA</span>
+      <Link to="/" className="text-sm font-semibold tracking-wide uppercase hover:text-muted-foreground transition-colors">
+        LogSAGA
+      </Link>
     </header>
   )
 }
