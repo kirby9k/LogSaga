@@ -191,7 +191,10 @@ function ItemDetailPage() {
           </div>
 
           {data.plot && (
-            <p className="text-sm text-muted-foreground leading-relaxed line-clamp-4">
+            <p className={cn(
+              'text-sm text-muted-foreground leading-relaxed',
+              data.media_type === 'episode' && thumbArt?.local_path ? 'line-clamp-2' : 'line-clamp-4',
+            )}>
               {data.plot}
             </p>
           )}
@@ -269,23 +272,25 @@ function ItemDetailPage() {
             </div>
           )}
         </div>
+
+        {/* Episode screencap — right column, same width as poster */}
+        {thumbArt?.local_path && (
+          <div className="hidden sm:block shrink-0 w-24 md:w-36 relative z-10">
+            <div className="aspect-video overflow-hidden rounded-lg bg-muted shadow-lg">
+              <img
+                src={`/art/${thumbArt.local_path}`}
+                alt="Episode thumbnail"
+                className="w-full h-full object-cover"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Cast */}
       {data.cast.length > 0 && (
         <div className="mt-6">
           <CastRow cast={data.cast} />
-        </div>
-      )}
-
-      {/* Episode screencap — 16:9, shown below the info block */}
-      {thumbArt?.local_path && (
-        <div className="mt-6 aspect-video overflow-hidden rounded-lg bg-muted">
-          <img
-            src={`/art/${thumbArt.local_path}`}
-            alt="Episode thumbnail"
-            className="w-full h-full object-cover"
-          />
         </div>
       )}
 
