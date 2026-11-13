@@ -121,14 +121,14 @@ function ItemDetailPage() {
       {heroSrc && (
         <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-96 md:h-[576px] overflow-hidden bg-background">
           <img src={heroSrc} alt="" className="w-full h-full object-contain" />
-          <div className="absolute inset-x-0 bottom-0 h-[20%] bg-gradient-to-b from-transparent to-background" />
+          <div className="absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-b from-transparent to-background" />
         </div>
       )}
 
       {/* Poster + info row */}
       <div className={cn(
         'flex gap-4 md:gap-6',
-        heroSrc ? '-mt-10 md:-mt-14 items-end' : 'flex-col md:flex-row',
+        heroSrc ? 'relative z-10 -mt-14 md:-mt-20 items-end max-w-4xl mx-auto' : 'flex-col md:flex-row',
       )}>
         {/* Poster */}
         <div className={cn(
@@ -141,7 +141,17 @@ function ItemDetailPage() {
             'overflow-hidden rounded-lg aspect-[2/3] bg-muted shadow-lg',
             !heroSrc && 'md:w-48',
           )}>
-            <MediaPoster src={posterSrc} alt={data.title} className="w-full h-full" />
+            {data.media_type === 'episode' && data.show_id ? (
+              <Link
+                to="/shows/$showId"
+                params={{ showId: String(data.show_id) }}
+                className="block w-full h-full"
+              >
+                <MediaPoster src={posterSrc} alt={data.title} className="w-full h-full hover:opacity-90 transition" />
+              </Link>
+            ) : (
+              <MediaPoster src={posterSrc} alt={data.title} className="w-full h-full" />
+            )}
           </div>
         </div>
 

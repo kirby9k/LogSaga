@@ -67,14 +67,14 @@ function ShowDetailPage() {
       {heroSrc && (
         <div className="relative -mx-4 md:-mx-6 h-96 md:h-[576px] overflow-hidden bg-background">
           <img src={heroSrc} alt="" className="w-full h-full object-contain" />
-          <div className="absolute inset-x-0 bottom-0 h-[20%] bg-gradient-to-b from-transparent to-background" />
+          <div className="absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-b from-transparent to-background" />
         </div>
       )}
 
       {/* Poster + metadata row */}
       <div className={cn(
         'flex gap-4 md:gap-6 mb-8',
-        heroSrc ? '-mt-10 md:-mt-14 items-end' : 'items-start',
+        heroSrc ? 'relative z-10 -mt-14 md:-mt-20 items-end' : 'items-start',
       )}>
         <div className={cn(
           'shrink-0',
