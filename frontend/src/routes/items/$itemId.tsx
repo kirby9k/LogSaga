@@ -275,7 +275,7 @@ function ItemDetailPage() {
 
         {/* Episode screencap — right column, same width as poster */}
         {thumbArt?.local_path && (
-          <div className="hidden sm:block shrink-0 w-24 md:w-36 relative z-10">
+          <div className="hidden sm:block shrink-0 w-48 md:w-72 relative z-10">
             <div className="aspect-video overflow-hidden rounded-lg bg-muted shadow-lg">
               <img
                 src={`/art/${thumbArt.local_path}`}
