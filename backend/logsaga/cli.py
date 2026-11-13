@@ -1096,7 +1096,7 @@ _ENRICH_EP_CAST_BATCH_SIZE = 50
 
 
 async def _bulk_enrich_episode_cast_async(
-    episode_item_ids: list,
+    episode_id_to_tmdb: dict,
     engine,
     cfg,
     concurrency: int,
@@ -1104,6 +1104,9 @@ async def _bulk_enrich_episode_cast_async(
     """
     Fetch per-episode TMDB credits and populate cast for episodes concurrently.
     Returns count of episodes enriched.
+
+    episode_id_to_tmdb maps media_item.id → effective TMDB show ID (string).
+    The effective ID is item.tmdb_id if set, otherwise kodi_show.tmdb_id.
 
     Each coroutine gets its own SQLAlchemy session. autoflush=False prevents
     SQLAlchemy from flushing pending inserts during query calls, which would
@@ -1115,29 +1118,34 @@ async def _bulk_enrich_episode_cast_async(
 
     SessionLocal = sessionmaker(bind=engine, autoflush=False)
     sem = asyncio.Semaphore(concurrency)
-    total = len(episode_item_ids)
+    total = len(episode_id_to_tmdb)
     done = 0
     completed_count = 0
 
-    async def enrich_episode(item_id: int) -> bool:
+    async def enrich_episode(item_id: int, tmdb_id: str) -> bool:
         async with sem:
             with SessionLocal() as db:
                 item = db.get(MediaItem, item_id)
-                if item is None or not item.tmdb_id or item.season is None or item.episode is None:
+                if item is None or item.season is None or item.episode is None:
                     return False
                 try:
                     tmdb = TMDBClient(cfg.tmdb_api_key, db)
                     ep_credits = await tmdb.episode_credits(
-                        int(item.tmdb_id), item.season, item.episode
+                        int(tmdb_id), item.season, item.episode
                     )
                     _insert_episode_cast(ep_credits, db, media_item_id=item.id)
                     return True
                 except Exception as exc:
                     db.rollback()
-                    typer.echo(f"  [warn] episode {item_id}: {exc}", err=True)
+                    typer.echo(
+                        f"  [warn] episode {item_id} S{item.season}E{item.episode}: {exc}",
+                        err=True,
+                    )
                     return False
 
-    for coro in asyncio.as_completed([enrich_episode(iid) for iid in episode_item_ids]):
+    for coro in asyncio.as_completed(
+        [enrich_episode(iid, tid) for iid, tid in episode_id_to_tmdb.items()]
+    ):
         success = await coro
         if success:
             done += 1
@@ -1174,7 +1182,7 @@ def enrich_episode_cast(
         typer.echo("TMDB_API_KEY not set — cannot fetch cast.", err=True)
         raise typer.Exit(1)
 
-    from logsaga.models import ItemCast, MediaItem
+    from logsaga.models import ItemCast, KodiShow, MediaItem
 
     engine, SessionLocal = _get_db_session(db_path)
 
@@ -1189,21 +1197,32 @@ def enrich_episode_cast(
                 .all()
             }
 
-        episode_item_ids = [
-            row[0]
-            for row in db.query(MediaItem.id)
+        # Join through kodi_show so episodes without their own tmdb_id still get
+        # enriched via the parent show's tmdb_id.  Season 0 (specials) are excluded
+        # because TMDB almost never has episode-level credits for them.
+        episode_rows = (
+            db.query(
+                MediaItem.id,
+                func.coalesce(MediaItem.tmdb_id, KodiShow.tmdb_id),
+            )
+            .join(KodiShow, MediaItem.show_id == KodiShow.id)
             .filter(
                 MediaItem.media_type == "episode",
-                MediaItem.tmdb_id.isnot(None),
                 MediaItem.season.isnot(None),
+                MediaItem.season > 0,
                 MediaItem.episode.isnot(None),
+                func.coalesce(MediaItem.tmdb_id, KodiShow.tmdb_id).isnot(None),
             )
             .order_by(MediaItem.id)
             .all()
+        )
+        episode_id_to_tmdb: dict[int, str] = {
+            row[0]: row[1]
+            for row in episode_rows
             if row[0] not in episodes_with_cast
-        ]
+        }
 
-    total = len(episode_item_ids)
+    total = len(episode_id_to_tmdb)
     typer.echo(f"Episodes needing cast: {total}")
 
     if dry_run:
@@ -1217,7 +1236,7 @@ def enrich_episode_cast(
     typer.echo(f"\nFetching episode cast for {total} episodes (concurrency={concurrency})...")
 
     done = asyncio.run(
-        _bulk_enrich_episode_cast_async(episode_item_ids, engine, cfg, concurrency)
+        _bulk_enrich_episode_cast_async(episode_id_to_tmdb, engine, cfg, concurrency)
     )
 
     typer.echo(f"\nDone. Episodes enriched: {done}/{total}")

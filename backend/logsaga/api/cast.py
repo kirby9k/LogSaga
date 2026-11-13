@@ -82,12 +82,21 @@ def populate_cast_for_item(item: MediaItem, db: Session) -> list[CastMemberOut]:
             )
 
         # 2. Episode credits in cache?
-        if item.tmdb_id and item.season is not None and item.episode is not None:
-            ep_key = f"tv:{item.tmdb_id}:ep:{item.season}:{item.episode}:credits"
-            ep_cached = db.get(TMDBCache, ep_key)
-            if ep_cached is not None:
-                ep_credits = json.loads(ep_cached.data_json)
-                return _insert_episode_cast(ep_credits, db, media_item_id=item.id)
+        # Prefer item's own tmdb_id; fall back to parent show's tmdb_id.
+        # (Most episode media_item rows have tmdb_id=NULL; the TMDB ID lives
+        # on kodi_show.tmdb_id for TV shows.)
+        if item.season is not None and item.episode is not None:
+            ep_tmdb_id = item.tmdb_id
+            if not ep_tmdb_id:
+                _parent = db.get(KodiShow, item.show_id)
+                if _parent:
+                    ep_tmdb_id = _parent.tmdb_id
+            if ep_tmdb_id:
+                ep_key = f"tv:{ep_tmdb_id}:ep:{item.season}:{item.episode}:credits"
+                ep_cached = db.get(TMDBCache, ep_key)
+                if ep_cached is not None:
+                    ep_credits = json.loads(ep_cached.data_json)
+                    return _insert_episode_cast(ep_credits, db, media_item_id=item.id)
 
         # 3. Fallback to show-level
         show = db.get(KodiShow, item.show_id)

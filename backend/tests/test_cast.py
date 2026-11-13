@@ -559,6 +559,36 @@ class TestPopulateCastForItemEpisodeLevel:
         # Should fall through to show-level and return 3 actors
         assert len(result) == 3
 
+    def test_episode_uses_show_tmdb_id_when_item_tmdb_id_is_null(self, db_session):
+        """Episode with tmdb_id=None falls back to kodi_show.tmdb_id for cache lookup."""
+        show = _make_show(db_session, tmdb_id="9999")
+        # Create episode without its own tmdb_id
+        ep = MediaItem(
+            media_type="episode",
+            title="Episode 1",
+            show_title=show.title,
+            show_id=show.id,
+            season=1,
+            episode=1,
+            runtime_s=1320,
+            kodi_state=KodiState.watched,
+            tmdb_id=None,  # deliberately NULL
+            kodi_media_id=99,
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+        db_session.add(ep)
+        db_session.flush()
+        # Episode credits cached under the show's tmdb_id
+        _make_ep_credits_cache(db_session, "9999", 1, 1, _sample_cast(2))
+        db_session.commit()
+
+        result = populate_cast_for_item(ep, db_session)
+
+        # Should find the cache via show.tmdb_id and return episode-level cast
+        assert len(result) == 2
+        assert result[0].name == "Actor 0"
+
     def test_season_detail_includes_show_tmdb_id(self, client, db_session):
         show = _make_show(db_session, tmdb_id="9999")
         _make_episode(db_session, show, season=1, episode=1)
