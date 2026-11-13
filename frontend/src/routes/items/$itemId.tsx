@@ -119,9 +119,9 @@ function ItemDetailPage() {
     <div className="p-4 md:p-6">
       {/* Hero backdrop — full-bleed cinematic banner */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-64 md:h-96 overflow-hidden">
-          <img src={heroSrc} alt="" className="w-full h-full object-cover object-[50%_65%]" />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
+        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-96 md:h-[576px] overflow-hidden bg-background">
+          <img src={heroSrc} alt="" className="w-full h-full object-contain" />
+          <div className="absolute inset-x-0 bottom-0 h-[20%] bg-gradient-to-b from-transparent to-background" />
         </div>
       )}
 
