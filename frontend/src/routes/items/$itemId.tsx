@@ -9,7 +9,6 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { PercentBar } from '@/components/shared/PercentBar'
 import { TimeAgo } from '@/components/shared/TimeAgo'
 import { RuntimeDisplay } from '@/components/shared/RuntimeDisplay'
-import { PageHeader } from '@/components/shared/PageHeader'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
@@ -118,37 +117,18 @@ function ItemDetailPage() {
 
   return (
     <div className="p-4 md:p-6">
-      {/* Hero backdrop — full-bleed, with title overlay */}
+      {/* Hero backdrop — full-bleed, letterboxed (black bars preserve aspect ratio) */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-52 md:h-72 overflow-hidden">
-          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
-          <div className="absolute bottom-4 left-4 md:left-6 right-4">
-            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-md">{displayTitle}</h1>
-            {data.show_title && data.media_type === 'episode' && (
-              data.show_id ? (
-                <Link
-                  to="/shows/$showId"
-                  params={{ showId: String(data.show_id) }}
-                  className="text-sm text-white/80 drop-shadow hover:text-white transition-colors"
-                >
-                  {data.show_title}
-                </Link>
-              ) : (
-                <p className="text-sm text-white/80 drop-shadow">{data.show_title}</p>
-              )
-            )}
-          </div>
+        <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 h-36 md:h-48 overflow-hidden bg-black">
+          <img src={heroSrc} alt="" className="w-full h-full object-contain" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/40" />
         </div>
       )}
-
-      {/* Title — only shown when there's no hero */}
-      {!heroSrc && <PageHeader title={data.show_title ?? data.title} />}
 
       {/* Poster + info row */}
       <div className={cn(
         'flex gap-4 md:gap-6',
-        heroSrc ? '-mt-14 md:-mt-20 items-end' : 'flex-col md:flex-row',
+        heroSrc ? '-mt-10 md:-mt-14 items-end' : 'flex-col md:flex-row',
       )}>
         {/* Poster */}
         <div className={cn(
@@ -167,27 +147,25 @@ function ItemDetailPage() {
 
         {/* Info */}
         <div className={cn('flex-1 min-w-0 space-y-4', heroSrc && 'pb-2')}>
-          {/* Title — only shown when there's no hero */}
-          {!heroSrc && (
-            <div>
-              <h2 className="text-xl font-semibold">{displayTitle}</h2>
-              {data.show_title && data.media_type === 'episode' && (
-                <p className="text-muted-foreground">
-                  {data.show_id ? (
-                    <Link
-                      to="/shows/$showId"
-                      params={{ showId: String(data.show_id) }}
-                      className="hover:text-foreground hover:underline transition-colors"
-                    >
-                      {data.show_title}
-                    </Link>
-                  ) : (
-                    data.show_title
-                  )}
-                </p>
-              )}
-            </div>
-          )}
+          {/* Title */}
+          <div>
+            <h2 className="text-xl font-semibold">{displayTitle}</h2>
+            {data.show_title && data.media_type === 'episode' && (
+              <p className="text-muted-foreground">
+                {data.show_id ? (
+                  <Link
+                    to="/shows/$showId"
+                    params={{ showId: String(data.show_id) }}
+                    className="hover:text-foreground hover:underline transition-colors"
+                  >
+                    {data.show_title}
+                  </Link>
+                ) : (
+                  data.show_title
+                )}
+              </p>
+            )}
+          </div>
 
           <div className="flex flex-wrap gap-2 items-center">
             <Badge variant="outline">{data.media_type === 'episode' ? 'TV' : 'Movie'}</Badge>

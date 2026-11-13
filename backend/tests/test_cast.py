@@ -20,6 +20,7 @@ from typing import Generator
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -471,3 +472,212 @@ class TestShowDetailLastSessionAt:
         seasons = resp.json()["seasons"]
         ep_data = seasons[0]["episodes"][0]
         assert ep_data["last_session_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# Helpers for episode-level cast tests
+# ---------------------------------------------------------------------------
+
+def _make_ep_credits_cache(
+    db: Session,
+    tmdb_id: str,
+    season: int,
+    episode: int,
+    cast_data: list[dict],
+    guest_data: list[dict] | None = None,
+) -> None:
+    """Insert a TMDB episode-credits cache entry (top-level cast + guest_stars)."""
+    data = {"cast": cast_data, "crew": [], "guest_stars": guest_data or []}
+    db.add(TMDBCache(
+        cache_key=f"tv:{tmdb_id}:ep:{season}:{episode}:credits",
+        data_json=json.dumps(data),
+        fetched_at=_NOW,
+    ))
+    db.flush()
+
+
+# ---------------------------------------------------------------------------
+# Tests: populate_cast_for_item — episode-level credits
+# ---------------------------------------------------------------------------
+class TestPopulateCastForItemEpisodeLevel:
+    def test_episode_uses_episode_level_cache_when_present(self, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        ep = _make_episode(db_session, show, season=1, episode=1)
+        # Episode-specific credits in cache (cast only, no guest stars)
+        _make_ep_credits_cache(db_session, "9999", 1, 1, _sample_cast(2))
+        db_session.commit()
+
+        result = populate_cast_for_item(ep, db_session)
+
+        assert len(result) == 2
+        assert result[0].name == "Actor 0"
+
+    def test_episode_includes_guest_stars(self, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        ep = _make_episode(db_session, show, season=1, episode=1)
+        regular_cast = [{"id": 2001, "name": "Regular", "character": "Main", "order": 0, "profile_path": None}]
+        guest_cast = [{"id": 2002, "name": "Guest Star", "character": "Villain", "order": 0, "profile_path": None}]
+        _make_ep_credits_cache(db_session, "9999", 1, 1, regular_cast, guest_cast)
+        db_session.commit()
+
+        result = populate_cast_for_item(ep, db_session)
+
+        names = {r.name for r in result}
+        assert "Regular" in names
+        assert "Guest Star" in names
+
+    def test_episode_returns_existing_episode_level_rows(self, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        ep = _make_episode(db_session, show, season=1, episode=1)
+        # Pre-insert a person and episode-level item_cast row
+        db_session.execute(
+            sqlite_insert(Person.__table__).values(
+                tmdb_person_id=5555, name="Pre-existing", profile_path=None, created_at=_NOW,
+            ).on_conflict_do_nothing(index_elements=["tmdb_person_id"])
+        )
+        db_session.execute(
+            sqlite_insert(ItemCast.__table__).values(
+                person_id=5555, media_item_id=ep.id, show_id=None, character="Existing Role", credit_order=0,
+            ).on_conflict_do_nothing()
+        )
+        db_session.commit()
+
+        result = populate_cast_for_item(ep, db_session)
+
+        assert len(result) == 1
+        assert result[0].name == "Pre-existing"
+
+    def test_episode_falls_back_to_show_level_when_no_episode_cache(self, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        ep = _make_episode(db_session, show, season=1, episode=1)
+        # Only show-level cache, no episode-level cache
+        _make_tmdb_tv_cache(db_session, "9999", _sample_cast(3))
+        db_session.commit()
+
+        result = populate_cast_for_item(ep, db_session)
+
+        # Should fall through to show-level and return 3 actors
+        assert len(result) == 3
+
+    def test_season_detail_includes_show_tmdb_id(self, client, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        _make_episode(db_session, show, season=1, episode=1)
+        db_session.commit()
+
+        resp = client.get(f"/api/shows/{show.id}/seasons/1")
+        assert resp.status_code == 200
+        assert resp.json()["show_tmdb_id"] == "9999"
+
+    def test_season_detail_show_tmdb_id_null_when_not_set(self, client, db_session):
+        show = _make_show(db_session, tmdb_id=None)
+        _make_episode(db_session, show, season=1, episode=1)
+        db_session.commit()
+
+        resp = client.get(f"/api/shows/{show.id}/seasons/1")
+        assert resp.status_code == 200
+        assert resp.json()["show_tmdb_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: populate_cast_for_show — episode aggregation
+# ---------------------------------------------------------------------------
+class TestPopulateCastForShowAggregation:
+    def test_aggregates_from_episode_cast_sorted_by_appearances(self, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        ep1 = _make_episode(db_session, show, season=1, episode=1)
+        ep2 = _make_episode(db_session, show, season=1, episode=2)
+        ep3 = _make_episode(db_session, show, season=1, episode=3)
+
+        # Person A (id 3001): appears in ep1 + ep2 (2 episodes)
+        # Person B (id 3002): appears in ep1 + ep2 + ep3 (3 episodes)
+        # Person C (id 3003): appears in ep1 only (1 episode)
+        for pid, name in [(3001, "Person A"), (3002, "Person B"), (3003, "Person C")]:
+            db_session.execute(
+                sqlite_insert(Person.__table__).values(
+                    tmdb_person_id=pid, name=name, profile_path=None, created_at=_NOW,
+                ).on_conflict_do_nothing(index_elements=["tmdb_person_id"])
+            )
+        # ep1: A, B, C
+        for order, (pid, ep) in enumerate([(3001, ep1), (3002, ep1), (3003, ep1)]):
+            db_session.execute(
+                sqlite_insert(ItemCast.__table__).values(
+                    person_id=pid, media_item_id=ep.id, show_id=None, character=None, credit_order=order,
+                ).on_conflict_do_nothing()
+            )
+        # ep2: A, B
+        for order, (pid, ep) in enumerate([(3001, ep2), (3002, ep2)]):
+            db_session.execute(
+                sqlite_insert(ItemCast.__table__).values(
+                    person_id=pid, media_item_id=ep.id, show_id=None, character=None, credit_order=order,
+                ).on_conflict_do_nothing()
+            )
+        # ep3: B only
+        db_session.execute(
+            sqlite_insert(ItemCast.__table__).values(
+                person_id=3002, media_item_id=ep3.id, show_id=None, character=None, credit_order=0,
+            ).on_conflict_do_nothing()
+        )
+        db_session.commit()
+
+        from logsaga.api.cast import populate_cast_for_show
+        result = populate_cast_for_show(show, db_session)
+
+        names = [r.name for r in result]
+        # B (3 eps) > A (2 eps) > C (1 ep)
+        assert names[0] == "Person B"
+        assert names[1] == "Person A"
+        assert names[2] == "Person C"
+
+    def test_fallback_to_show_level_when_no_episode_cast(self, db_session):
+        show = _make_show(db_session, tmdb_id="9999")
+        # No episodes in DB → no episode-level rows
+        _make_tmdb_tv_cache(db_session, "9999", _sample_cast(3))
+        db_session.commit()
+
+        from logsaga.api.cast import populate_cast_for_show
+        result = populate_cast_for_show(show, db_session)
+
+        # Falls through to show-level TMDB cache
+        assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/admin/cast-status
+# ---------------------------------------------------------------------------
+class TestGetCastStatus:
+    def test_returns_zeros_when_empty(self, client):
+        resp = client.get("/api/admin/cast-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_items"] == 0
+        assert data["items_with_cast"] == 0
+        assert data["total_shows"] == 0
+        assert data["shows_with_cast"] == 0
+        assert data["pending_items"] == 0
+        assert data["pending_shows"] == 0
+
+    def test_counts_movies_and_shows(self, client, db_session):
+        movie = _make_movie(db_session, tmdb_id="12345")
+        show = _make_show(db_session, tmdb_id="9999")
+        db_session.commit()
+
+        resp = client.get("/api/admin/cast-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_items"] == 1   # 1 movie with tmdb_id
+        assert data["total_shows"] == 1   # 1 show with tmdb_id
+        assert data["pending_items"] == 1
+        assert data["pending_shows"] == 1
+
+    def test_items_with_cast_decrements_pending(self, client, db_session):
+        movie = _make_movie(db_session, tmdb_id="12345")
+        _make_tmdb_movie_cache(db_session, "12345", _sample_cast(2))
+        db_session.commit()
+
+        populate_cast_for_item(movie, db_session)
+
+        resp = client.get("/api/admin/cast-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["items_with_cast"] == 1
+        assert data["pending_items"] == 0

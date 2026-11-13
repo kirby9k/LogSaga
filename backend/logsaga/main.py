@@ -377,6 +377,92 @@ async def _fill_missing_artwork_bg(app: FastAPI) -> None:
         logger.error("auto_artwork_fill_failed", error=str(exc))
 
 
+async def _fill_missing_cast_bg(app: FastAPI) -> None:
+    """
+    Fire-and-forget: populate cast for all items/shows that have tmdb_id but
+    no item_cast rows yet.
+
+    Reads only the local tmdb_cache (no network calls) so it's safe to run
+    after every library sync.  Returns quickly if everything is already done.
+    """
+    cfg = app.state.settings
+    engine = app.state.engine
+
+    def _sync() -> int:
+        from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+
+        SessionLocal = sessionmaker(bind=engine, autoflush=False)
+        total = 0
+
+        with SessionLocal() as db:
+            from logsaga.models import ItemCast as _ItemCast, KodiShow as _KodiShow
+
+            # Shows with tmdb_id but no show-level cast rows
+            shows_with_cast = {
+                r[0]
+                for r in db.query(_ItemCast.show_id)
+                .filter(_ItemCast.show_id.isnot(None))
+                .distinct()
+                .all()
+            }
+            show_ids = [
+                r[0]
+                for r in db.query(_KodiShow.id)
+                .filter(_KodiShow.tmdb_id.isnot(None))
+                .limit(200)
+                .all()
+                if r[0] not in shows_with_cast
+            ]
+
+            # Movies with tmdb_id but no item-level cast rows
+            items_with_cast = {
+                r[0]
+                for r in db.query(_ItemCast.media_item_id)
+                .filter(_ItemCast.media_item_id.isnot(None))
+                .distinct()
+                .all()
+            }
+            movie_ids = [
+                r[0]
+                for r in db.query(MediaItem.id)
+                .filter(
+                    MediaItem.media_type == "movie",
+                    MediaItem.tmdb_id.isnot(None),
+                )
+                .limit(200)
+                .all()
+                if r[0] not in items_with_cast
+            ]
+
+        for show_id in show_ids:
+            with SessionLocal() as db:
+                show = db.get(_KodiShow, show_id)
+                if show is None:
+                    continue
+                rows = populate_cast_for_show(show, db)
+                total += len(rows)
+
+        for item_id in movie_ids:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, item_id)
+                if item is None:
+                    continue
+                rows = populate_cast_for_item(item, db)
+                total += len(rows)
+
+        return total
+
+    if not cfg.tmdb_api_key:
+        return
+
+    try:
+        inserted = await asyncio.to_thread(_sync)
+        if inserted:
+            logger.info("auto_cast_fill_done", cast_rows=inserted)
+    except Exception as exc:
+        logger.error("auto_cast_fill_failed", error=str(exc))
+
+
 async def _library_sync_loop(app: FastAPI) -> None:
     """
     Background task: run a full library sync every cfg.library_sync_hours.
@@ -401,6 +487,7 @@ async def _library_sync_loop(app: FastAPI) -> None:
                 # don't have it yet. Fire-and-forget; runs in background.
                 if has_new:
                     asyncio.create_task(_fill_missing_artwork_bg(app))
+                    asyncio.create_task(_fill_missing_cast_bg(app))
             else:
                 logger.warning("library_sync_skipped_no_kodi_conn")
         except asyncio.CancelledError:

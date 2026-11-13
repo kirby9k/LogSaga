@@ -26,6 +26,7 @@ from logsaga.api.schemas import (
     ArtworkOut,
     ArtworkStatusOut,
     CastMemberOut,
+    CastStatusOut,
     DailyStatOut,
     EpisodeSummaryOut,
     HealthOut,
@@ -791,6 +792,7 @@ def get_season(
         total_episodes=len(episodes),
         watched_episodes=len(watched_ids),
         episodes=ep_out,
+        show_tmdb_id=show.tmdb_id,
     )
 
 
@@ -1354,6 +1356,51 @@ def get_artwork_status(
         items_with_artwork=items_with_artwork,
         total_artwork_rows=total_artwork_rows,
         pending=max(0, total_items - items_with_artwork),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/cast-status
+# ---------------------------------------------------------------------------
+@router.get("/admin/cast-status", response_model=CastStatusOut)
+def get_cast_status(
+    db: Session = Depends(get_db),
+) -> CastStatusOut:
+    """Cast population progress summary (movies + TV shows)."""
+    total_items = (
+        db.query(func.count(MediaItem.id))
+        .filter(
+            MediaItem.tmdb_id.isnot(None),
+            MediaItem.media_type.in_([MediaType.movie, MediaType.episode]),
+        )
+        .scalar()
+    ) or 0
+
+    items_with_cast = (
+        db.query(func.count(func.distinct(ItemCast.media_item_id)))
+        .filter(ItemCast.media_item_id.isnot(None))
+        .scalar()
+    ) or 0
+
+    total_shows = (
+        db.query(func.count(KodiShow.id))
+        .filter(KodiShow.tmdb_id.isnot(None))
+        .scalar()
+    ) or 0
+
+    shows_with_cast = (
+        db.query(func.count(func.distinct(ItemCast.show_id)))
+        .filter(ItemCast.show_id.isnot(None))
+        .scalar()
+    ) or 0
+
+    return CastStatusOut(
+        total_items=total_items,
+        items_with_cast=items_with_cast,
+        total_shows=total_shows,
+        shows_with_cast=shows_with_cast,
+        pending_items=max(0, total_items - items_with_cast),
+        pending_shows=max(0, total_shows - shows_with_cast),
     )
 
 

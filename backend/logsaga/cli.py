@@ -8,8 +8,9 @@ Commands:
   sync --once      Run one poll cycle
   rebuild-sessions Delete all sessions and rebuild from observations
   fetch-artwork    Download artwork for all (or one) media items
-  enrich-cast      Fetch TMDB credits and populate cast for all library items
-  enrich-tmdb-ids  Search TMDB to fill in missing tmdb_ids by title + year
+  enrich-cast          Fetch TMDB credits and populate cast for all library items
+  enrich-episode-cast  Fetch per-episode TMDB credits (includes guest stars)
+  enrich-tmdb-ids      Search TMDB to fill in missing tmdb_ids by title + year
 """
 
 from __future__ import annotations
@@ -1086,6 +1087,140 @@ def enrich_cast(
     typer.echo(f"\nDone.")
     typer.echo(f"  Shows enriched:   {shows_done}")
     typer.echo(f"  Movies enriched:  {movies_done}")
+
+
+# ---------------------------------------------------------------------------
+# enrich-episode-cast
+# ---------------------------------------------------------------------------
+_ENRICH_EP_CAST_BATCH_SIZE = 50
+
+
+async def _bulk_enrich_episode_cast_async(
+    episode_item_ids: list,
+    engine,
+    cfg,
+    concurrency: int,
+) -> int:
+    """
+    Fetch per-episode TMDB credits and populate cast for episodes concurrently.
+    Returns count of episodes enriched.
+
+    Each coroutine gets its own SQLAlchemy session. autoflush=False prevents
+    SQLAlchemy from flushing pending inserts during query calls, which would
+    hold the SQLite write lock across await points.
+    """
+    from logsaga.api.cast import _insert_episode_cast
+    from logsaga.models import MediaItem
+    from logsaga.tmdb.client import TMDBClient
+
+    SessionLocal = sessionmaker(bind=engine, autoflush=False)
+    sem = asyncio.Semaphore(concurrency)
+    total = len(episode_item_ids)
+    done = 0
+    completed_count = 0
+
+    async def enrich_episode(item_id: int) -> bool:
+        async with sem:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, item_id)
+                if item is None or not item.tmdb_id or item.season is None or item.episode is None:
+                    return False
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    ep_credits = await tmdb.episode_credits(
+                        int(item.tmdb_id), item.season, item.episode
+                    )
+                    _insert_episode_cast(ep_credits, db, media_item_id=item.id)
+                    return True
+                except Exception as exc:
+                    db.rollback()
+                    typer.echo(f"  [warn] episode {item_id}: {exc}", err=True)
+                    return False
+
+    for coro in asyncio.as_completed([enrich_episode(iid) for iid in episode_item_ids]):
+        success = await coro
+        if success:
+            done += 1
+        completed_count += 1
+        if completed_count % _ENRICH_EP_CAST_BATCH_SIZE == 0 or completed_count == total:
+            typer.echo(f"  {completed_count}/{total} processed...")
+
+    return done
+
+
+@app.command(name="enrich-episode-cast")
+def enrich_episode_cast(
+    concurrency: int = typer.Option(5, "--concurrency", help="Concurrent TMDB fetches (default 5)."),
+    force: bool = typer.Option(False, "--force", help="Re-enrich episodes that already have cast."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print counts without fetching."),
+    db_path: str = typer.Option("logsaga.db", envvar="LOGSAGA_DB_PATH"),
+) -> None:
+    """
+    Fetch per-episode TMDB credits (cast + guest stars) for all episodes.
+
+    For each episode with a TMDB ID, fetches the episode-specific credits from
+    TMDB (caching them in tmdb_cache under tv:{id}:ep:{s}:{e}:credits) then
+    inserts person + item_cast rows keyed to the episode's media_item_id.
+
+    Episode-level cast is richer than show-level credits because it includes
+    guest stars. After running this command, show cast pages will aggregate
+    across episodes to surface series regulars at the top.
+
+    Idempotent: episodes that already have cast entries are skipped unless
+    --force is set.
+    """
+    cfg = _get_settings()
+    if not cfg.tmdb_api_key:
+        typer.echo("TMDB_API_KEY not set — cannot fetch cast.", err=True)
+        raise typer.Exit(1)
+
+    from logsaga.models import ItemCast, MediaItem
+
+    engine, SessionLocal = _get_db_session(db_path)
+
+    with SessionLocal() as db:
+        episodes_with_cast: set[int] = set()
+        if not force:
+            episodes_with_cast = {
+                row[0]
+                for row in db.query(ItemCast.media_item_id)
+                .filter(ItemCast.media_item_id.isnot(None))
+                .distinct()
+                .all()
+            }
+
+        episode_item_ids = [
+            row[0]
+            for row in db.query(MediaItem.id)
+            .filter(
+                MediaItem.media_type == "episode",
+                MediaItem.tmdb_id.isnot(None),
+                MediaItem.season.isnot(None),
+                MediaItem.episode.isnot(None),
+            )
+            .order_by(MediaItem.id)
+            .all()
+            if row[0] not in episodes_with_cast
+        ]
+
+    total = len(episode_item_ids)
+    typer.echo(f"Episodes needing cast: {total}")
+
+    if dry_run:
+        typer.echo("\n--dry-run: not fetching.")
+        return
+
+    if total == 0:
+        typer.echo("\nNothing to do.")
+        return
+
+    typer.echo(f"\nFetching episode cast for {total} episodes (concurrency={concurrency})...")
+
+    done = asyncio.run(
+        _bulk_enrich_episode_cast_async(episode_item_ids, engine, cfg, concurrency)
+    )
+
+    typer.echo(f"\nDone. Episodes enriched: {done}/{total}")
 
 
 # ---------------------------------------------------------------------------

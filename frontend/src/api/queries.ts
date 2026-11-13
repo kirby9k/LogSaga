@@ -12,6 +12,7 @@ import { apiClient } from './client'
 export const QK = {
   health: ['health'] as const,
   artworkStatus: ['artworkStatus'] as const,
+  castStatus: ['castStatus'] as const,
   recent: (params: RecentParams) => ['recent', params] as const,
   sessions: (params: SessionsParams) => ['sessions', params] as const,
   inProgress: ['inProgress'] as const,
@@ -282,6 +283,21 @@ export function useArtworkStatus() {
     queryKey: QK.artworkStatus,
     queryFn: async () => {
       const { data, error } = await apiClient.GET('/api/admin/artwork-status')
+      return assertOk(data, error)
+    },
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/cast-status  — polled every 10 s during enrichment
+// ---------------------------------------------------------------------------
+export function useCastStatus() {
+  return useQuery({
+    queryKey: QK.castStatus,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/admin/cast-status')
       return assertOk(data, error)
     },
     staleTime: 10_000,

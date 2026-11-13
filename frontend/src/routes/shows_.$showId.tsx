@@ -63,24 +63,18 @@ function ShowDetailPage() {
         <span className="text-foreground font-medium line-clamp-1">{show.show_title}</span>
       </nav>
 
-      {/* Hero backdrop — full-bleed, with show title overlay */}
+      {/* Hero backdrop — full-bleed, letterboxed (black bars preserve aspect ratio) */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 h-52 md:h-72 overflow-hidden">
-          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
-          <div className="absolute bottom-4 left-4 md:left-6 right-4">
-            <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-md">{show.show_title}</h1>
-            {show.year && (
-              <p className="text-sm text-white/80 drop-shadow">{show.year}</p>
-            )}
-          </div>
+        <div className="relative -mx-4 md:-mx-6 h-36 md:h-48 overflow-hidden bg-black">
+          <img src={heroSrc} alt="" className="w-full h-full object-contain" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/40" />
         </div>
       )}
 
       {/* Poster + metadata row */}
       <div className={cn(
         'flex gap-4 md:gap-6 mb-8',
-        heroSrc ? '-mt-14 md:-mt-20 items-end' : 'items-start',
+        heroSrc ? '-mt-10 md:-mt-14 items-end' : 'items-start',
       )}>
         <div className={cn(
           'shrink-0',
@@ -97,22 +91,15 @@ function ShowDetailPage() {
         </div>
 
         <div className={cn('flex-1 min-w-0', heroSrc && 'pb-2')}>
-          {/* Show title — only shown when no hero */}
-          {!heroSrc && (
-            <div className="flex flex-wrap items-start gap-2 mb-1">
-              <h1 className="text-2xl font-bold leading-tight">{show.show_title}</h1>
-              <KodiStateBadge state={show.kodi_state} />
-            </div>
-          )}
-          {heroSrc && (
-            <div className="mb-1">
-              <KodiStateBadge state={show.kodi_state} />
-            </div>
-          )}
+          {/* Show title — always visible */}
+          <div className="flex flex-wrap items-start gap-2 mb-1">
+            <h1 className="text-2xl font-bold leading-tight">{show.show_title}</h1>
+            <KodiStateBadge state={show.kodi_state} />
+          </div>
 
           {/* Meta row */}
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground mb-3">
-            {!heroSrc && show.year && <span>{show.year}</span>}
+            {show.year && <span>{show.year}</span>}
             {show.premiered && show.premiered !== show.year?.toString() && (
               <span>Premiered {show.premiered}</span>
             )}

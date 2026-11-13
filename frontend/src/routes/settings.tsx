@@ -4,6 +4,7 @@ import {
   useHealth,
   useRebuildSessions,
   useArtworkStatus,
+  useCastStatus,
   useAdminSettings,
   useUpdateSettings,
   useJobs,
@@ -49,6 +50,7 @@ function SettingsPage() {
   const { data: health, isLoading } = useHealth()
   const rebuild = useRebuildSessions()
   const { data: artStatus } = useArtworkStatus()
+  const { data: castStatus } = useCastStatus()
   const { data: settingsData, isLoading: settingsLoading } = useAdminSettings()
   const updateSettings = useUpdateSettings()
   const { data: jobs, refetch: refetchJobs } = useJobs()
@@ -223,6 +225,50 @@ function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Cast data progress card */}
+      {castStatus && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle className="text-sm">Cast Data</CardTitle>
+            <CardDescription className="text-xs">
+              Actor credits from TMDB. Run <code>logsaga enrich-cast</code> or <code>logsaga enrich-episode-cast</code> to populate.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <Row label="Movies / episodes with cast">
+              {castStatus.items_with_cast} / {castStatus.total_items}
+            </Row>
+            {castStatus.total_items > 0 && (
+              <div className="space-y-1">
+                <Progress
+                  value={Math.round((castStatus.items_with_cast / castStatus.total_items) * 100)}
+                  className="h-2"
+                />
+                <p className="text-xs text-muted-foreground text-right">
+                  {Math.round((castStatus.items_with_cast / castStatus.total_items) * 100)}% items complete
+                  {castStatus.pending_items > 0 && ` (${castStatus.pending_items} pending)`}
+                </p>
+              </div>
+            )}
+            <Row label="Shows with cast">
+              {castStatus.shows_with_cast} / {castStatus.total_shows}
+            </Row>
+            {castStatus.total_shows > 0 && (
+              <div className="space-y-1">
+                <Progress
+                  value={Math.round((castStatus.shows_with_cast / castStatus.total_shows) * 100)}
+                  className="h-2"
+                />
+                <p className="text-xs text-muted-foreground text-right">
+                  {Math.round((castStatus.shows_with_cast / castStatus.total_shows) * 100)}% shows complete
+                  {castStatus.pending_shows > 0 && ` (${castStatus.pending_shows} pending)`}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Artwork progress card */}
       {artStatus && (

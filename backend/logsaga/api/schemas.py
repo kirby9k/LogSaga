@@ -191,6 +191,7 @@ class SeasonSummaryOut(BaseModel):
     total_episodes: int
     watched_episodes: int
     episodes: list[EpisodeSummaryOut] = []
+    show_tmdb_id: Optional[str] = None
 
 
 class ShowDetailOut(BaseModel):
@@ -301,6 +302,15 @@ class ArtworkStatusOut(BaseModel):
     items_with_artwork: int
     total_artwork_rows: int
     pending: int
+
+
+class CastStatusOut(BaseModel):
+    total_items: int
+    items_with_cast: int
+    total_shows: int
+    shows_with_cast: int
+    pending_items: int
+    pending_shows: int
 
 
 class RebuildSessionsOut(BaseModel):

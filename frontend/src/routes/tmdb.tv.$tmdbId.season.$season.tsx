@@ -2,12 +2,15 @@ import { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useTMDBSeason } from '@/api/queries'
 import type { WatchedItemIn } from '@/api/queries'
+import type { components } from '@/api/types'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { Button } from '@/components/ui/button'
 import { BookmarkPlus, ChevronRight, Tv } from 'lucide-react'
+
+type TMDBEpisodeOut = components['schemas']['TMDBEpisodeOut']
 
 export const Route = createFileRoute('/tmdb/tv/$tmdbId/season/$season')({
   component: TMDBSeasonPage,
@@ -19,6 +22,8 @@ function TMDBSeasonPage() {
   const seasonNum = parseInt(seasonParam, 10)
   const { data: season, isLoading, isError } = useTMDBSeason(id, seasonNum)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [selectedEp, setSelectedEp] = useState<TMDBEpisodeOut | null>(null)
+  const [epDialogOpen, setEpDialogOpen] = useState(false)
 
   if (isLoading) return <div className="p-4 md:p-6"><LoadingSkeleton count={8} variant="row" /></div>
   if (isError || !season) return <div className="p-4 md:p-6"><ErrorState message="Season not found on TMDB." /></div>
@@ -132,10 +137,22 @@ function TMDBSeasonPage() {
                 <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{ep.overview}</p>
               )}
             </div>
+
+            {/* Per-episode Add button */}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="shrink-0 self-center ml-auto"
+              title={`Add E${String(ep.episode).padStart(2, '0')} to history`}
+              onClick={() => { setSelectedEp(ep); setEpDialogOpen(true) }}
+            >
+              <BookmarkPlus size={14} />
+            </Button>
           </div>
         ))}
       </div>
 
+      {/* Season-level dialog */}
       <AddToHistoryDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
@@ -144,6 +161,23 @@ function TMDBSeasonPage() {
         missingReleaseDates={missingReleaseDates}
         label={`Add Season ${season.season} (${items.length} episodes)`}
       />
+
+      {/* Per-episode dialog */}
+      {selectedEp && (
+        <AddToHistoryDialog
+          open={epDialogOpen}
+          onOpenChange={(o) => { setEpDialogOpen(o); if (!o) setSelectedEp(null) }}
+          items={[{
+            media_type: 'episode' as const,
+            tmdb_id: id,
+            season: selectedEp.season,
+            episode: selectedEp.episode,
+            watched_at: '',
+          }]}
+          releaseDate={selectedEp.air_date ?? null}
+          label={`Add E${String(selectedEp.episode).padStart(2, '0')} – ${selectedEp.title}`}
+        />
+      )}
     </div>
   )
 }

@@ -94,6 +94,20 @@ class TMDBClient:
             DETAIL_TTL_DAYS,
         )
 
+    async def episode_credits(self, tmdb_id: int, season: int, episode: int) -> dict:
+        """Fetch per-episode cast + guest stars from TMDB.
+
+        Returns top-level keys ``cast``, ``crew``, ``guest_stars``
+        (no ``credits`` wrapper — different from movie/show format).
+        """
+        cache_key = f"tv:{tmdb_id}:ep:{season}:{episode}:credits"
+        return await self._get_cached(
+            cache_key,
+            f"/tv/{tmdb_id}/season/{season}/episode/{episode}/credits",
+            {"language": "en-US"},
+            DETAIL_TTL_DAYS,
+        )
+
     async def person_detail(self, tmdb_person_id: int) -> dict:
         """Fetch person details (biography, birthday, place_of_birth, profile_path)."""
         cache_key = f"person:{tmdb_person_id}"

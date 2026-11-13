@@ -157,6 +157,13 @@ export interface paths {
       };
     };
   };
+  "/api/admin/cast-status": {
+    get: {
+      responses: {
+        200: { content: { "application/json": components["schemas"]["CastStatusOut"] } };
+      };
+    };
+  };
   "/api/search": {
     get: {
       parameters: {
@@ -369,6 +376,7 @@ export interface components {
       total_episodes: number;
       watched_episodes: number;
       episodes: components["schemas"]["EpisodeSummaryOut"][];
+      show_tmdb_id?: string | null;
     };
 
     ShowDetailOut: {
@@ -467,6 +475,15 @@ export interface components {
       items_with_artwork: number;
       total_artwork_rows: number;
       pending: number;
+    };
+
+    CastStatusOut: {
+      total_items: number;
+      items_with_cast: number;
+      total_shows: number;
+      shows_with_cast: number;
+      pending_items: number;
+      pending_shows: number;
     };
 
     RebuildSessionsOut: {

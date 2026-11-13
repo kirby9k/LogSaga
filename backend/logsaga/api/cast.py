@@ -13,12 +13,21 @@ Usage:
 
 Both return a list[CastMemberOut] of up to 20 cast members (billing order).
 On first call the rows are inserted; subsequent calls return existing rows instantly.
+
+Episode credits
+---------------
+TMDB's /tv/{id}/season/{s}/episode/{e}/credits returns a top-level dict with
+``cast`` and ``guest_stars`` arrays (no ``credits`` wrapper — unlike movie/show).
+When episode-level credits are cached we merge cast + guest_stars and store them
+against the episode's media_item_id.  ``populate_cast_for_show`` aggregates those
+rows, sorting by number of appearances then average billing order.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
@@ -42,12 +51,45 @@ _CAST_RETURN_LIMIT = 20
 def populate_cast_for_item(item: MediaItem, db: Session) -> list[CastMemberOut]:
     """Return cast for a movie or episode item.
 
-    For episodes, delegates to the show's cast (TV credits are show-level).
+    For episodes uses a three-tier lookup:
+      1. Existing item_cast rows keyed to this episode's media_item_id
+      2. TMDB episode credits cache (tv:{id}:ep:{s}:{e}:credits)
+      3. Fallback to show-level cast (backward-compatible with enrich-cast)
+
+    For movies checks item_cast rows keyed to the movie's media_item_id,
+    then populates from the movie's TMDB cache entry.
+
     Returns up to 20 CastMemberOut objects in billing order.
     """
     if item.media_type == "episode":
         if item.show_id is None:
             return []
+
+        # 1. Already populated at episode level?
+        existing = (
+            db.query(ItemCast)
+            .filter(ItemCast.media_item_id == item.id)
+            .first()
+        )
+        if existing is not None:
+            return _cast_rows_to_out(
+                db.query(ItemCast)
+                .filter(ItemCast.media_item_id == item.id)
+                .order_by(ItemCast.credit_order)
+                .limit(_CAST_RETURN_LIMIT)
+                .all(),
+                db,
+            )
+
+        # 2. Episode credits in cache?
+        if item.tmdb_id and item.season is not None and item.episode is not None:
+            ep_key = f"tv:{item.tmdb_id}:ep:{item.season}:{item.episode}:credits"
+            ep_cached = db.get(TMDBCache, ep_key)
+            if ep_cached is not None:
+                ep_credits = json.loads(ep_cached.data_json)
+                return _insert_episode_cast(ep_credits, db, media_item_id=item.id)
+
+        # 3. Fallback to show-level
         show = db.get(KodiShow, item.show_id)
         if show is None:
             return []
@@ -81,8 +123,33 @@ def populate_cast_for_item(item: MediaItem, db: Session) -> list[CastMemberOut]:
 def populate_cast_for_show(show: KodiShow, db: Session) -> list[CastMemberOut]:
     """Return cast for a TV show.
 
-    Returns up to 20 CastMemberOut objects in billing order.
+    Uses a two-tier lookup:
+      1. Aggregate episode-level item_cast rows (sorts by appearances)
+      2. Fallback to show-level item_cast rows (populated by enrich-cast), then
+         populate from the show's TMDB cache entry if neither exists.
+
+    Returns up to 20 CastMemberOut objects.
     """
+    # 1. Episode-level aggregation
+    ep_ids = [
+        r[0]
+        for r in db.query(MediaItem.id)
+        .filter(
+            MediaItem.show_id == show.id,
+            MediaItem.media_type == "episode",
+        )
+        .all()
+    ]
+    if ep_ids:
+        ep_cast_rows = (
+            db.query(ItemCast)
+            .filter(ItemCast.media_item_id.in_(ep_ids))
+            .all()
+        )
+        if ep_cast_rows:
+            return _aggregate_episode_cast(ep_cast_rows, db)
+
+    # 2. Fallback: show-level (existing behavior)
     existing = (
         db.query(ItemCast)
         .filter(ItemCast.show_id == show.id)
@@ -129,6 +196,71 @@ def _cast_rows_to_out(rows: list[ItemCast], db: Session) -> list[CastMemberOut]:
                 name=person.name,
                 character=row.character,
                 credit_order=row.credit_order,
+                profile_url=profile_url,
+            )
+        )
+    return result
+
+
+def _insert_episode_cast(
+    ep_credits: dict,
+    db: Session,
+    *,
+    media_item_id: int,
+) -> list[CastMemberOut]:
+    """Insert Person + ItemCast rows from TMDB episode credits JSON.
+
+    Episode credits use top-level ``cast`` + ``guest_stars`` arrays (no
+    ``credits`` wrapper).  We merge both arrays and delegate to _insert_cast
+    via the standard ``{"credits": {"cast": combined}}`` wrapper.
+    """
+    combined = ep_credits.get("cast", []) + ep_credits.get("guest_stars", [])
+    return _insert_cast(
+        {"credits": {"cast": combined}},
+        db,
+        media_item_id=media_item_id,
+        show_id=None,
+    )
+
+
+def _aggregate_episode_cast(rows: list[ItemCast], db: Session) -> list[CastMemberOut]:
+    """Aggregate episode-level ItemCast rows into a show-level cast list.
+
+    Sorts by number of episode appearances (desc) then average billing order (asc)
+    so series regulars rise to the top.  Returns up to _CAST_RETURN_LIMIT entries.
+    """
+    counts: dict[int, int] = defaultdict(int)
+    order_sum: dict[int, int] = defaultdict(int)
+    char_by_person: dict[int, Optional[str]] = {}
+
+    for row in rows:
+        pid = row.person_id
+        counts[pid] += 1
+        order_sum[pid] += row.credit_order
+        if pid not in char_by_person:
+            char_by_person[pid] = row.character
+
+    sorted_pids = sorted(
+        counts,
+        key=lambda p: (-counts[p], order_sum[p] / counts[p]),
+    )
+
+    result: list[CastMemberOut] = []
+    for i, pid in enumerate(sorted_pids[:_CAST_RETURN_LIMIT]):
+        person = db.get(Person, pid)
+        if person is None:
+            continue
+        profile_url = (
+            f"https://image.tmdb.org/t/p/w185{person.profile_path}"
+            if person.profile_path
+            else None
+        )
+        result.append(
+            CastMemberOut(
+                tmdb_person_id=person.tmdb_person_id,
+                name=person.name,
+                character=char_by_person.get(pid),
+                credit_order=i,
                 profile_url=profile_url,
             )
         )
