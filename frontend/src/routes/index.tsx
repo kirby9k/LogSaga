@@ -85,7 +85,7 @@ function Dashboard() {
             <Clock size={16} className="text-muted-foreground" />
             Recently Played
           </h2>
-          <Link to="/recent" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <Link to="/recent" search={{ type: 'all' }} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
             View all →
           </Link>
         </div>
