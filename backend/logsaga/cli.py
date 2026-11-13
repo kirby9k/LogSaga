@@ -8,6 +8,7 @@ Commands:
   sync --once      Run one poll cycle
   rebuild-sessions Delete all sessions and rebuild from observations
   fetch-artwork    Download artwork for all (or one) media items
+  enrich-cast      Fetch TMDB credits and populate cast for all library items
 """
 
 from __future__ import annotations
@@ -914,3 +915,171 @@ def fetch_artwork(
         kodi_conn.close()
         if rpc:
             rpc.close()
+
+
+# ---------------------------------------------------------------------------
+# enrich-cast
+# ---------------------------------------------------------------------------
+_ENRICH_CAST_BATCH_SIZE = 50
+
+
+async def _bulk_enrich_cast_async(
+    show_ids: list,
+    movie_item_ids: list,
+    engine,
+    cfg,
+    concurrency: int,
+) -> tuple:
+    """
+    Fetch TMDB credits and populate cast for shows + movies concurrently.
+    Returns (shows_done, movies_done).
+
+    Each coroutine gets its own SQLAlchemy session. autoflush=False prevents
+    SQLAlchemy from flushing pending inserts during query calls, which would
+    hold the SQLite write lock across await points.
+    """
+    from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+    from logsaga.models import KodiShow, MediaItem
+    from logsaga.tmdb.client import TMDBClient
+
+    SessionLocal = sessionmaker(bind=engine, autoflush=False)
+    sem = asyncio.Semaphore(concurrency)
+    total = len(show_ids) + len(movie_item_ids)
+    shows_done = 0
+    movies_done = 0
+    completed_count = 0
+
+    async def enrich_show(show_id: int) -> tuple:
+        async with sem:
+            with SessionLocal() as db:
+                show = db.get(KodiShow, show_id)
+                if show is None or not show.tmdb_id:
+                    return "show", False
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    await tmdb.tv_detail(show.tmdb_id)   # writes to tmdb_cache
+                    populate_cast_for_show(show, db)     # reads cache → inserts rows
+                    return "show", True
+                except Exception as exc:
+                    db.rollback()
+                    typer.echo(f"  [warn] show {show_id}: {exc}", err=True)
+                    return "show", False
+
+    async def enrich_movie(item_id: int) -> tuple:
+        async with sem:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, item_id)
+                if item is None or not item.tmdb_id:
+                    return "movie", False
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    await tmdb.movie_detail(item.tmdb_id)  # writes to tmdb_cache
+                    populate_cast_for_item(item, db)       # reads cache → inserts rows
+                    return "movie", True
+                except Exception as exc:
+                    db.rollback()
+                    typer.echo(f"  [warn] movie item {item_id}: {exc}", err=True)
+                    return "movie", False
+
+    all_coros = (
+        [enrich_show(sid) for sid in show_ids]
+        + [enrich_movie(iid) for iid in movie_item_ids]
+    )
+
+    for coro in asyncio.as_completed(all_coros):
+        kind, success = await coro
+        if kind == "show" and success:
+            shows_done += 1
+        elif kind == "movie" and success:
+            movies_done += 1
+        completed_count += 1
+        if completed_count % _ENRICH_CAST_BATCH_SIZE == 0 or completed_count == total:
+            typer.echo(f"  {completed_count}/{total} processed...")
+
+    return shows_done, movies_done
+
+
+@app.command(name="enrich-cast")
+def enrich_cast(
+    concurrency: int = typer.Option(5, "--concurrency", help="Concurrent TMDB fetches (default 5)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print counts without fetching."),
+    db_path: str = typer.Option("logsaga.db", envvar="LOGSAGA_DB_PATH"),
+) -> None:
+    """
+    Fetch TMDB credits and populate cast for all library items.
+
+    For each TV show and movie with a TMDB ID but no cast entries, fetches
+    TMDB credits (caching them in tmdb_cache) then inserts person + item_cast rows.
+
+    Idempotent: items that already have cast entries are skipped.
+    Use --dry-run to see counts before fetching.
+    Rate-limited fetches retry automatically on the next run.
+    """
+    cfg = _get_settings()
+    if not cfg.tmdb_api_key:
+        typer.echo("TMDB_API_KEY not set — cannot fetch cast.", err=True)
+        raise typer.Exit(1)
+
+    from logsaga.models import ItemCast, KodiShow, MediaItem
+
+    engine, SessionLocal = _get_db_session(db_path)
+
+    with SessionLocal() as db:
+        # Collect show IDs that already have cast entries
+        shows_with_cast = {
+            row[0]
+            for row in db.query(ItemCast.show_id)
+            .filter(ItemCast.show_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        show_ids = [
+            row[0]
+            for row in db.query(KodiShow.id)
+            .filter(KodiShow.tmdb_id.isnot(None))
+            .order_by(KodiShow.id)
+            .all()
+            if row[0] not in shows_with_cast
+        ]
+
+        # Collect movie item IDs that already have cast entries
+        movies_with_cast = {
+            row[0]
+            for row in db.query(ItemCast.media_item_id)
+            .filter(ItemCast.media_item_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        movie_item_ids = [
+            row[0]
+            for row in db.query(MediaItem.id)
+            .filter(
+                MediaItem.media_type == "movie",
+                MediaItem.tmdb_id.isnot(None),
+            )
+            .order_by(MediaItem.id)
+            .all()
+            if row[0] not in movies_with_cast
+        ]
+
+    total = len(show_ids) + len(movie_item_ids)
+    typer.echo(f"TV shows needing cast:  {len(show_ids)}")
+    typer.echo(f"Movies needing cast:    {len(movie_item_ids)}")
+
+    if dry_run:
+        typer.echo("\n--dry-run: not fetching.")
+        return
+
+    if total == 0:
+        typer.echo("\nNothing to do.")
+        return
+
+    typer.echo(f"\nFetching cast for {total} items (concurrency={concurrency})...")
+
+    shows_done, movies_done = asyncio.run(
+        _bulk_enrich_cast_async(show_ids, movie_item_ids, engine, cfg, concurrency)
+    )
+
+    typer.echo(f"\nDone.")
+    typer.echo(f"  Shows enriched:   {shows_done}")
+    typer.echo(f"  Movies enriched:  {movies_done}")
