@@ -65,8 +65,8 @@ function ShowDetailPage() {
 
       {/* Hero backdrop — full-bleed cinematic banner */}
       {heroSrc && (
-        <div className="relative -mx-4 md:-mx-6 h-44 md:h-64 overflow-hidden">
-          <img src={heroSrc} alt="" className="w-full h-full object-cover" />
+        <div className="relative -mx-4 md:-mx-6 h-64 md:h-96 overflow-hidden">
+          <img src={heroSrc} alt="" className="w-full h-full object-cover object-[50%_65%]" />
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
         </div>
       )}
