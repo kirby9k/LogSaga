@@ -2395,6 +2395,11 @@ async def get_actor_recommendations(
             return None
         if media_type == "tv" and tmdb_id in local_show_tmdb_ids:
             return None
+        # Skip talk shows, news, and reality TV (TMDB genre IDs 10767, 10763, 10764)
+        _EXCLUDED_GENRES = {10767, 10763, 10764}
+        genre_ids = set(entry.get("genre_ids") or [])
+        if genre_ids & _EXCLUDED_GENRES:
+            return None
         title = entry.get("title") or entry.get("name") or ""
         date_str = entry.get("release_date") or entry.get("first_air_date") or ""
         year: int | None = None
