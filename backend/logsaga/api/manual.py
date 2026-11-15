@@ -124,6 +124,7 @@ def _find_or_create_movie(
             director = person.get("name")
             break
 
+    now = datetime.utcnow()
     item = MediaItem(
         media_type=MediaType.movie,
         title=movie_data.get("title", "Unknown"),
@@ -134,9 +135,10 @@ def _find_or_create_movie(
         runtime_s=runtime_s,
         director=director,
         tmdb_id=tmdb_id_str,
+        date_added=now.strftime("%Y-%m-%d %H:%M:%S"),
         kodi_state=KodiState.unwatched,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=now,
+        updated_at=now,
     )
     db.add(item)
     db.flush()
@@ -181,6 +183,7 @@ def _find_or_create_episode(
     runtime_min = ep_data.get("runtime")
     runtime_s = int(runtime_min) * 60 if runtime_min else None
 
+    now = datetime.utcnow()
     item = MediaItem(
         media_type=MediaType.episode,
         title=ep_data.get("name", f"Episode {episode}"),
@@ -193,9 +196,10 @@ def _find_or_create_episode(
         runtime_s=runtime_s,
         tmdb_id=tmdb_id_str,
         show_id=show.id,
+        date_added=now.strftime("%Y-%m-%d %H:%M:%S"),
         kodi_state=KodiState.unwatched,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=now,
+        updated_at=now,
     )
     db.add(item)
     db.flush()
