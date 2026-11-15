@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # --- Polling ---
     poll_seconds: int = 30
     library_sync_hours: float = 2.0  # interval between full library syncs
+    cast_sync_hours: float = 24.0    # interval between periodic cast sync passes
 
     # --- Timezone ---
     # Must match the Kodi client's local timezone (lastPlayed is written in client local time).

@@ -2093,23 +2093,35 @@ async def post_watched(
         else None
     )
 
-    # Fire-and-forget artwork for new TMDB-only items
+    # Fire-and-forget artwork + cast for new TMDB-only items
     engine = request.app.state.engine
-    def _schedule_artwork(item_id: int) -> None:
+    def _schedule_enrich(item_id: int) -> None:
         from logsaga.artwork.cache import fetch_tmdb_artwork_async
+        from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+        from logsaga.models import KodiShow as _KodiShow
         from sqlalchemy.orm import sessionmaker as _sm
         async def _run():
-            with _sm(bind=engine)() as art_db:
-                art_item = art_db.get(MediaItem, item_id)
-                if art_item and art_item.kodi_media_id is None:
-                    await fetch_tmdb_artwork_async(art_item, art_db, cfg)
+            with _sm(bind=engine)() as enrich_db:
+                art_item = enrich_db.get(MediaItem, item_id)
+                if art_item is None:
+                    return
+                # Artwork — TMDB-only items only (Kodi-linked items get art via poll loop)
+                if art_item.kodi_media_id is None:
+                    await fetch_tmdb_artwork_async(art_item, enrich_db, cfg)
+                # Cast — TMDB detail is already cached by create_manual_sessions
+                if art_item.media_type == "movie":
+                    populate_cast_for_item(art_item, enrich_db)
+                elif art_item.media_type == "episode" and art_item.show_id:
+                    show = enrich_db.get(_KodiShow, art_item.show_id)
+                    if show:
+                        populate_cast_for_show(show, enrich_db)
         asyncio.create_task(_run())
 
     return await create_manual_sessions(
         db=db,
         items=body.items,
         tmdb_client=tmdb_client,
-        schedule_artwork=_schedule_artwork,
+        schedule_artwork=_schedule_enrich,
     )
 
 

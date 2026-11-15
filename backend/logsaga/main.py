@@ -307,6 +307,57 @@ async def _fetch_artwork_for_items_bg(app: FastAPI, item_ids: list[int]) -> None
         logger.error("auto_artwork_new_items_failed", error=str(exc))
 
 
+async def _enrich_new_items_bg(app: FastAPI, item_ids: list[int]) -> None:
+    """
+    Full enrichment for newly created MediaItems: artwork + TMDB detail + cast.
+
+    Called from the poll loop when new items are first detected. Steps:
+      1. Artwork  — delegates to the existing _fetch_artwork_for_items_bg.
+      2. TMDB detail + cast — for each item with a tmdb_id, fetches movie_detail
+         or tv_detail (writing to tmdb_cache), then populates item_cast rows.
+
+    Skips gracefully if TMDB is not configured or the item has no tmdb_id.
+    """
+    if not item_ids:
+        return
+
+    # Step 1: artwork (opens its own Kodi connection internally)
+    await _fetch_artwork_for_items_bg(app, item_ids)
+
+    # Step 2: TMDB detail + cast
+    cfg = app.state.settings
+    if not cfg.tmdb_api_key:
+        return
+
+    engine = app.state.engine
+
+    for iid in item_ids:
+        try:
+            from sqlalchemy.orm import sessionmaker as _sm
+
+            from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+            from logsaga.tmdb.client import TMDBClient
+
+            with _sm(bind=engine, autoflush=False)() as db:
+                item = db.get(MediaItem, iid)
+                if item is None or not item.tmdb_id:
+                    continue
+
+                tmdb = TMDBClient(cfg.tmdb_api_key, db)
+
+                if item.media_type == "movie":
+                    await tmdb.movie_detail(int(item.tmdb_id))
+                    populate_cast_for_item(item, db)
+                elif item.media_type == "episode" and item.show_id:
+                    from logsaga.models import KodiShow as _KodiShow
+                    show = db.get(_KodiShow, item.show_id)
+                    if show and show.tmdb_id:
+                        await tmdb.tv_detail(int(show.tmdb_id))
+                        populate_cast_for_show(show, db)
+        except Exception as exc:
+            logger.error("enrich_new_item_failed", item_id=iid, error=str(exc))
+
+
 async def _fill_missing_artwork_bg(app: FastAPI) -> None:
     """
     Fire-and-forget: fetch artwork for all items that have no downloaded artwork.
@@ -395,7 +446,8 @@ async def _fill_missing_cast_bg(app: FastAPI) -> None:
         total = 0
 
         with SessionLocal() as db:
-            from logsaga.models import ItemCast as _ItemCast, KodiShow as _KodiShow
+            from logsaga.models import ItemCast as _ItemCast
+            from logsaga.models import KodiShow as _KodiShow
 
             # Shows with tmdb_id but no show-level cast rows
             shows_with_cast = {
@@ -461,6 +513,142 @@ async def _fill_missing_cast_bg(app: FastAPI) -> None:
             logger.info("auto_cast_fill_done", cast_rows=inserted)
     except Exception as exc:
         logger.error("auto_cast_fill_failed", error=str(exc))
+
+
+async def _run_cast_sync_bg(app: FastAPI) -> None:
+    """
+    One pass of the periodic cast sync: fetch TMDB credits for all items/shows
+    with a tmdb_id but no item_cast rows yet.
+
+    Makes live TMDB API calls (results cached for 30 days). Uses a semaphore to
+    bound concurrency at 3 so we don't hammer the TMDB API.
+    """
+    cfg = app.state.settings
+    if not cfg.tmdb_api_key:
+        return
+
+    engine = app.state.engine
+
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+    from logsaga.models import ItemCast as _ItemCast
+    from logsaga.models import KodiShow as _KodiShow
+    from logsaga.tmdb.client import TMDBClient
+
+    SessionLocal = _sm(bind=engine, autoflush=False)
+
+    # Collect shows and movies that need cast
+    with SessionLocal() as db:
+        shows_with_cast = {
+            r[0]
+            for r in db.query(_ItemCast.show_id)
+            .filter(_ItemCast.show_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        show_ids = [
+            r[0]
+            for r in db.query(_KodiShow.id)
+            .filter(_KodiShow.tmdb_id.isnot(None))
+            .all()
+            if r[0] not in shows_with_cast
+        ]
+
+        items_with_cast = {
+            r[0]
+            for r in db.query(_ItemCast.media_item_id)
+            .filter(_ItemCast.media_item_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        movie_ids = [
+            r[0]
+            for r in db.query(MediaItem.id)
+            .filter(
+                MediaItem.media_type == "movie",
+                MediaItem.tmdb_id.isnot(None),
+            )
+            .all()
+            if r[0] not in items_with_cast
+        ]
+
+    total = len(show_ids) + len(movie_ids)
+    if total == 0:
+        return
+
+    logger.info("cast_sync_start", shows=len(show_ids), movies=len(movie_ids))
+
+    sem = asyncio.Semaphore(3)
+    shows_done = 0
+    movies_done = 0
+
+    async def _enrich_show(show_id: int) -> bool:
+        async with sem:
+            try:
+                with SessionLocal() as db:
+                    show = db.get(_KodiShow, show_id)
+                    if show is None or not show.tmdb_id:
+                        return False
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    await tmdb.tv_detail(int(show.tmdb_id))
+                    populate_cast_for_show(show, db)
+                    return True
+            except Exception as exc:
+                logger.warning("cast_sync_show_failed", show_id=show_id, error=str(exc))
+                return False
+
+    async def _enrich_movie(item_id: int) -> bool:
+        async with sem:
+            try:
+                with SessionLocal() as db:
+                    item = db.get(MediaItem, item_id)
+                    if item is None or not item.tmdb_id:
+                        return False
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    await tmdb.movie_detail(int(item.tmdb_id))
+                    populate_cast_for_item(item, db)
+                    return True
+            except Exception as exc:
+                logger.warning("cast_sync_movie_failed", item_id=item_id, error=str(exc))
+                return False
+
+    coros = [_enrich_show(sid) for sid in show_ids] + [_enrich_movie(mid) for mid in movie_ids]
+    results = await asyncio.gather(*coros, return_exceptions=False)
+    shows_done = sum(1 for i, ok in enumerate(results) if ok and i < len(show_ids))
+    movies_done = sum(1 for i, ok in enumerate(results) if ok and i >= len(show_ids))
+
+    logger.info("cast_sync_done", shows_done=shows_done, movies_done=movies_done, total=total)
+
+
+async def _cast_sync_loop(app: FastAPI) -> None:
+    """
+    Background task: run a full cast sync every cfg.cast_sync_hours.
+
+    Initial delay of 10 minutes so library sync has time to complete first.
+    Only runs if TMDB is configured.
+    """
+    cfg = app.state.settings
+    if not cfg.tmdb_api_key:
+        return
+
+    interval_s = int(cfg.cast_sync_hours * 3600)
+
+    # Initial delay — let the library sync run first
+    await asyncio.sleep(600)
+
+    while True:
+        try:
+            await _run_cast_sync_bg(app)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("cast_sync_loop_error", error=str(exc))
+
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            break
 
 
 async def _library_sync_loop(app: FastAPI) -> None:
@@ -534,10 +722,10 @@ async def _poll_loop(app: FastAPI) -> None:
             )
             if new_obs > 0:
                 logger.info("poll_cycle_complete", new_observations=new_obs)
-            # Newly created items have no artwork yet — fetch it immediately
-            # rather than waiting up to 2 h for the next library sync cycle.
+            # Newly created items need full enrichment — artwork + TMDB + cast.
+            # Fire-and-forget; don't wait for the next library sync cycle.
             if new_item_ids:
-                asyncio.create_task(_fetch_artwork_for_items_bg(app, new_item_ids))
+                asyncio.create_task(_enrich_new_items_bg(app, new_item_ids))
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -589,6 +777,10 @@ async def lifespan(app: FastAPI):
 
     library_task = asyncio.create_task(_library_sync_loop(app))
     tasks.append(library_task)
+
+    if cfg.tmdb_enabled:
+        cast_task = asyncio.create_task(_cast_sync_loop(app))
+        tasks.append(cast_task)
 
     if cfg.mqtt_enabled:
         mqtt_task = asyncio.create_task(run_mqtt_publisher(cfg, engine))
