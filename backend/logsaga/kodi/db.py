@@ -277,19 +277,23 @@ _SQL_GET_SHOW_ID_FOR_EPISODE = "SELECT idShow FROM episode WHERE idEpisode = %s"
 # ---------------------------------------------------------------------------
 
 _SQL_LIBRARY_MOVIES = """
-SELECT m.idMovie       AS media_id,
-       m.idFile        AS file_id,
-       m.c00           AS title,
-       m.c11           AS runtime_s,
-       m.premiered     AS release_date,
-       m.c01           AS plot,
-       m.c14           AS genres,
-       m.c15           AS director,
-       f.dateAdded     AS date_added,
-       f.playCount     AS play_count,
-       f.lastPlayed    AS last_played
+SELECT m.idMovie           AS media_id,
+       m.idFile            AS file_id,
+       m.c00               AS title,
+       m.c11               AS runtime_s,
+       m.premiered         AS release_date,
+       m.c01               AS plot,
+       m.c14               AS genres,
+       m.c15               AS director,
+       f.dateAdded         AS date_added,
+       f.playCount         AS play_count,
+       f.lastPlayed        AS last_played,
+       uid_tmdb.value      AS tmdb_id
 FROM movie m
 JOIN files f ON f.idFile = m.idFile
+LEFT JOIN uniqueid uid_tmdb ON uid_tmdb.media_id = m.idMovie
+    AND uid_tmdb.media_type = 'movie'
+    AND uid_tmdb.type = 'tmdb'
 """
 
 _SQL_LIBRARY_EPISODES = """
@@ -429,6 +433,7 @@ class LibraryMovie:
     date_added: Optional[str]
     play_count: Optional[int]
     last_played: Optional[str]
+    tmdb_id: Optional[str] = None
 
 
 @dataclass
@@ -818,6 +823,7 @@ def fetch_library_movies(conn: pymysql.Connection) -> list[LibraryMovie]:
             date_added=row["date_added"] or None,
             play_count=row["play_count"],
             last_played=row["last_played"] or None,
+            tmdb_id=row["tmdb_id"] or None,
         ))
     return result
 
