@@ -235,6 +235,24 @@ If the canonical file exists, the DB row is updated to point there — no re-dow
 **fetch-artwork locking:** Commits after every individual item so the SQLite write lock
 is held for milliseconds only. `asyncio.Semaphore` controls concurrency.
 
+**Automatic artwork triggers:**
+1. **Poll creates a new item** → `_fetch_artwork_for_items_bg` fires immediately for that item.
+2. **Library sync completes** → `_fill_missing_artwork_bg` fires unconditionally (not just when
+   new items were created). It queries for all `MediaItem` rows that have `kodi_media_id` but
+   no `Artwork` row with a `local_path`, then fetches art for each. If every item already has
+   artwork the function exits after one SQLite query without opening a Kodi connection.
+3. **Item played** (Stage E) → `_enrich_played_items_bg` checks for missing artwork/cast on the
+   played item and re-runs `_enrich_new_items_bg` if gaps exist.
+4. **Manual** → `logsaga fetch-artwork` or `POST /api/admin/fetch-artwork` (force=True, bypasses
+   retry backoff).
+
+**Why `_fill_missing_artwork_bg` runs unconditionally:** The fast-sync path (triggered immediately
+when Kodi's file count changes) fires within ~30 seconds of a new item being added — before Kodi
+has finished writing art table rows for the new episode or show. The first run finds no art and
+creates no rows. Without unconditional re-checking, those items would sit in a permanent dead zone:
+they already exist in `media_item` so no future sync sets `has_new = True`, and they haven't been
+played so Stage E never fires.
+
 ### sync_state
 Single row (id = 1). Health record updated after every poll cycle.
 

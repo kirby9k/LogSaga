@@ -783,10 +783,15 @@ async def _library_sync_loop(app: FastAPI) -> None:
                     has_new = await asyncio.to_thread(
                         _run_library_sync, app.state.engine, kodi.conn, cfg
                     )
-                    # If new items were added, fill artwork for any items that
-                    # don't have it yet. Fire-and-forget; runs in background.
+                    # Always scan for items missing artwork — the fast-sync path
+                    # (Stage B) may fire before Kodi has finished writing art
+                    # table rows for new episodes/shows, so the first attempt
+                    # finds nothing and no retry would ever trigger without this.
+                    # _fill_missing_artwork_bg exits immediately (no Kodi conn
+                    # opened) when every item already has local artwork.
+                    asyncio.create_task(_fill_missing_artwork_bg(app))
+                    # Cast population is heavier; only run when items are new.
                     if has_new:
-                        asyncio.create_task(_fill_missing_artwork_bg(app))
                         asyncio.create_task(_fill_missing_cast_bg(app))
                 else:
                     logger.warning("library_sync_skipped_no_kodi_conn")
