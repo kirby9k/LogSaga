@@ -107,6 +107,39 @@ function CreditFilterBar({
 }
 
 // ---------------------------------------------------------------------------
+// Skeleton helpers
+// ---------------------------------------------------------------------------
+function CardGridSkeleton({ count }: { count: number }) {
+  return (
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="animate-pulse">
+          <div className="aspect-[2/3] rounded-md bg-muted" />
+          <div className="mt-1 h-2.5 rounded bg-muted w-3/4" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RowListSkeleton({ count }: { count: number }) {
+  return (
+    <div className="space-y-2">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-3 py-2 animate-pulse">
+          <div className="shrink-0 w-9 rounded bg-muted" style={{ aspectRatio: '2/3' }} />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-2.5 rounded bg-muted w-1/2" />
+            <div className="h-2 rounded bg-muted w-1/3" />
+          </div>
+          <div className="h-2 rounded bg-muted w-16 shrink-0" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 function ActorDetailPage() {
@@ -114,9 +147,9 @@ function ActorDetailPage() {
   const id = parseInt(actorId, 10)
 
   const { data: actor, isLoading, isError } = useActor(id)
-  const { data: recommendations } = useActorRecommendations(id)
-  const { data: filmography } = useActorFilmography(id)
-  const { data: recentSessions } = useActorRecentSessions(id)
+  const { data: recommendations, isLoading: recsLoading } = useActorRecommendations(id)
+  const { data: filmography, isLoading: filmLoading } = useActorFilmography(id)
+  const { data: recentSessions, isLoading: recentLoading } = useActorRecentSessions(id)
 
   // UI state
   const [photoOpen, setPhotoOpen] = useState(false)
@@ -311,87 +344,103 @@ function ActorDetailPage() {
       )}
 
       {/* ── Recommendations tabs: Most Popular | Most Recent ── */}
-      {hasRecs && (
+      {(recsLoading || hasRecs) && (
         <>
           <Separator className="my-8" />
           <section className="mb-8">
             <h2 className="text-lg font-semibold mb-3">Recommendations</h2>
-            <TabBar
-              tabs={[
-                { value: 'popular', label: 'Most Popular' },
-                { value: 'recent', label: 'Most Recent' },
-              ]}
-              active={recTab}
-              onChange={setRecTab}
-            />
-            {(() => {
-              const items =
-                recTab === 'popular'
-                  ? (recommendations?.most_popular ?? [])
-                  : (recommendations?.most_recent ?? [])
-              if (items.length === 0) {
-                return <p className="text-sm text-muted-foreground py-4">No recommendations available.</p>
-              }
-              return (
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                  {items.map(item => (
-                    <DiscoveryCard
-                      key={`${recTab}-${item.media_type}-${item.tmdb_id}`}
-                      item={item}
-                    />
-                  ))}
-                </div>
-              )
-            })()}
+            {recsLoading ? (
+              <CardGridSkeleton count={6} />
+            ) : (
+              <>
+                <TabBar
+                  tabs={[
+                    { value: 'popular', label: 'Most Popular' },
+                    { value: 'recent', label: 'Most Recent' },
+                  ]}
+                  active={recTab}
+                  onChange={setRecTab}
+                />
+                {(() => {
+                  const items =
+                    recTab === 'popular'
+                      ? (recommendations?.most_popular ?? [])
+                      : (recommendations?.most_recent ?? [])
+                  if (items.length === 0) {
+                    return <p className="text-sm text-muted-foreground py-4">No recommendations available.</p>
+                  }
+                  return (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                      {items.map(item => (
+                        <DiscoveryCard
+                          key={`${recTab}-${item.media_type}-${item.tmdb_id}`}
+                          item={item}
+                        />
+                      ))}
+                    </div>
+                  )
+                })()}
+              </>
+            )}
           </section>
         </>
       )}
 
       {/* ── Filmography: Movies | TV Shows tabs + credit filters ── */}
-      {hasFilmography && (
+      {(filmLoading || hasFilmography) && (
         <>
           <Separator className="my-8" />
           <section className="mb-8">
             <h2 className="text-lg font-semibold mb-3">Filmography</h2>
-            <TabBar
-              tabs={[
-                { value: 'movies', label: `Movies (${filmography?.movies.length ?? 0})` },
-                { value: 'tv', label: `TV Shows (${filmography?.tv_shows.length ?? 0})` },
-              ]}
-              active={filmTab}
-              onChange={setFilmTab}
-            />
-            <CreditFilterBar
-              items={filmItems}
-              active={activeFilter}
-              onChange={setActiveFilter}
-            />
-            {filteredFilmItems.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4">
-                No {CREDIT_LABELS[activeFilter].toLowerCase()} credits found.
-              </p>
+            {filmLoading ? (
+              <CardGridSkeleton count={12} />
             ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                {filteredFilmItems.map((item, i) => (
-                  <FilmographyCard key={`film-${item.media_type}-${item.tmdb_id}-${item.credit_type}-${i}`} item={item} />
-                ))}
-              </div>
+              <>
+                <TabBar
+                  tabs={[
+                    { value: 'movies', label: `Movies (${filmography?.movies.length ?? 0})` },
+                    { value: 'tv', label: `TV Shows (${filmography?.tv_shows.length ?? 0})` },
+                  ]}
+                  active={filmTab}
+                  onChange={setFilmTab}
+                />
+                <CreditFilterBar
+                  items={filmItems}
+                  active={activeFilter}
+                  onChange={setActiveFilter}
+                />
+                {filteredFilmItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4">
+                    No {CREDIT_LABELS[activeFilter].toLowerCase()} credits found.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                    {filteredFilmItems.map((item, i) => (
+                      <FilmographyCard key={`film-${item.media_type}-${item.tmdb_id}-${item.credit_type}-${i}`} item={item} />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </section>
         </>
       )}
 
       {/* ── Recently Played (always at bottom) ── */}
-      {hasRecentSessions && (
+      {(recentLoading || hasRecentSessions) && (
         <>
           <Separator className="my-8" />
           <section>
             <h2 className="text-lg font-semibold mb-4">Recently Played</h2>
-            <div className="space-y-2">
-              {recentSessions!.map(s => (
-                <RecentSessionRow key={s.session_id} session={s} />
-              ))}
-            </div>
+            {recentLoading ? (
+              <RowListSkeleton count={5} />
+            ) : (
+              <div className="space-y-2">
+                {recentSessions!.map(s => (
+                  <RecentSessionRow key={s.session_id} session={s} />
+                ))}
+              </div>
+            )}
           </section>
         </>
       )}

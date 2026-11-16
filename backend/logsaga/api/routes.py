@@ -2935,23 +2935,34 @@ async def get_actor_filmography(
     ).all()
     show_tmdb_to_id: dict[int, int] = {int(r[0]): r[1] for r in show_rows}
 
-    # Watched/total episode counts per show
-    watched_eps_by_show: dict[int, int] = {}
-    total_eps_by_show: dict[int, int] = {}
-    for tmdb_id_val, show_id_val in show_tmdb_to_id.items():
-        total = (
-            db.query(func.count(MediaItem.id))
-            .filter(MediaItem.show_id == show_id_val, MediaItem.media_type == MediaType.episode)
-            .scalar() or 0
+    # Episode counts per show — two aggregated queries instead of 2×N per-show queries
+    show_ids = list(show_tmdb_to_id.values())
+    if show_ids:
+        total_rows = (
+            db.query(MediaItem.show_id, func.count(MediaItem.id))
+            .filter(
+                MediaItem.show_id.in_(show_ids),
+                MediaItem.media_type == MediaType.episode,
+            )
+            .group_by(MediaItem.show_id)
+            .all()
         )
-        watched = (
-            db.query(func.count(func.distinct(WatchSession.media_item_id)))
-            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
-            .filter(MediaItem.show_id == show_id_val, WatchSession.status == SessionStatus.completed)
-            .scalar() or 0
+        total_eps_by_show: dict[int, int] = {r[0]: r[1] for r in total_rows}
+
+        watched_rows = (
+            db.query(MediaItem.show_id, func.count(func.distinct(WatchSession.media_item_id)))
+            .join(WatchSession, WatchSession.media_item_id == MediaItem.id)
+            .filter(
+                MediaItem.show_id.in_(show_ids),
+                WatchSession.status == SessionStatus.completed,
+            )
+            .group_by(MediaItem.show_id)
+            .all()
         )
-        total_eps_by_show[show_id_val] = total
-        watched_eps_by_show[show_id_val] = watched
+        watched_eps_by_show: dict[int, int] = {r[0]: r[1] for r in watched_rows}
+    else:
+        total_eps_by_show = {}
+        watched_eps_by_show = {}
 
     def _year_from_entry(entry: dict) -> int | None:
         date_str = entry.get("release_date") or entry.get("first_air_date") or ""
