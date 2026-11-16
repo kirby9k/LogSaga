@@ -486,7 +486,7 @@ def detect_db_name(cfg: Settings) -> str:
         host=cfg.kodi_db_host,
         port=cfg.kodi_db_port,
         user=cfg.kodi_db_user,
-        password=cfg.kodi_db_password,
+        password=cfg.kodi_db_password.get_secret_value(),
         cursorclass=pymysql.cursors.Cursor,
         connect_timeout=10,
     )
@@ -518,7 +518,7 @@ def connect(cfg: Settings, db_name: Optional[str] = None) -> pymysql.Connection:
         host=cfg.kodi_db_host,
         port=cfg.kodi_db_port,
         user=cfg.kodi_db_user,
-        password=cfg.kodi_db_password,
+        password=cfg.kodi_db_password.get_secret_value(),
         database=db_name,
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10,

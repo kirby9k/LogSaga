@@ -10,11 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as RecentRouteImport } from './routes/recent'
+import { Route as ConfigurationRouteImport } from './routes/configuration'
 import { Route as ContinueRouteImport } from './routes/continue'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as MoviesRouteImport } from './routes/movies'
 import { Route as PartialRouteImport } from './routes/partial'
+import { Route as RecentRouteImport } from './routes/recent'
 import { Route as RecentlyAddedRouteImport } from './routes/recently-added'
 import { Route as RecentlyViewedRouteImport } from './routes/recently-viewed'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -33,9 +34,9 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RecentRoute = RecentRouteImport.update({
-  id: '/recent',
-  path: '/recent',
+const ConfigurationRoute = ConfigurationRouteImport.update({
+  id: '/configuration',
+  path: '/configuration',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ContinueRoute = ContinueRouteImport.update({
@@ -56,6 +57,11 @@ const MoviesRoute = MoviesRouteImport.update({
 const PartialRoute = PartialRouteImport.update({
   id: '/partial',
   path: '/partial',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecentRoute = RecentRouteImport.update({
+  id: '/recent',
+  path: '/recent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RecentlyAddedRoute = RecentlyAddedRouteImport.update({
@@ -123,11 +129,12 @@ const TmdbTvTmdbIdSeasonSeasonRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/recent': typeof RecentRoute
+  '/configuration': typeof ConfigurationRoute
   '/continue': typeof ContinueRoute
   '/history': typeof HistoryRoute
   '/movies': typeof MoviesRoute
   '/partial': typeof PartialRoute
+  '/recent': typeof RecentRoute
   '/recently-added': typeof RecentlyAddedRoute
   '/recently-viewed': typeof RecentlyViewedRoute
   '/settings': typeof SettingsRoute
@@ -143,11 +150,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/recent': typeof RecentRoute
+  '/configuration': typeof ConfigurationRoute
   '/continue': typeof ContinueRoute
   '/history': typeof HistoryRoute
   '/movies': typeof MoviesRoute
   '/partial': typeof PartialRoute
+  '/recent': typeof RecentRoute
   '/recently-added': typeof RecentlyAddedRoute
   '/recently-viewed': typeof RecentlyViewedRoute
   '/settings': typeof SettingsRoute
@@ -164,11 +172,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/recent': typeof RecentRoute
+  '/configuration': typeof ConfigurationRoute
   '/continue': typeof ContinueRoute
   '/history': typeof HistoryRoute
   '/movies': typeof MoviesRoute
   '/partial': typeof PartialRoute
+  '/recent': typeof RecentRoute
   '/recently-added': typeof RecentlyAddedRoute
   '/recently-viewed': typeof RecentlyViewedRoute
   '/settings': typeof SettingsRoute
@@ -186,11 +195,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/recent'
+    | '/configuration'
     | '/continue'
     | '/history'
     | '/movies'
     | '/partial'
+    | '/recent'
     | '/recently-added'
     | '/recently-viewed'
     | '/settings'
@@ -206,11 +216,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/recent'
+    | '/configuration'
     | '/continue'
     | '/history'
     | '/movies'
     | '/partial'
+    | '/recent'
     | '/recently-added'
     | '/recently-viewed'
     | '/settings'
@@ -226,11 +237,12 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/recent'
+    | '/configuration'
     | '/continue'
     | '/history'
     | '/movies'
     | '/partial'
+    | '/recent'
     | '/recently-added'
     | '/recently-viewed'
     | '/settings'
@@ -247,11 +259,12 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  RecentRoute: typeof RecentRoute
+  ConfigurationRoute: typeof ConfigurationRoute
   ContinueRoute: typeof ContinueRoute
   HistoryRoute: typeof HistoryRoute
   MoviesRoute: typeof MoviesRoute
   PartialRoute: typeof PartialRoute
+  RecentRoute: typeof RecentRoute
   RecentlyAddedRoute: typeof RecentlyAddedRoute
   RecentlyViewedRoute: typeof RecentlyViewedRoute
   SettingsRoute: typeof SettingsRoute
@@ -273,11 +286,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/recent': {
-      id: '/recent'
-      path: '/recent'
-      fullPath: '/recent'
-      preLoaderRoute: typeof RecentRouteImport
+    '/configuration': {
+      id: '/configuration'
+      path: '/configuration'
+      fullPath: '/configuration'
+      preLoaderRoute: typeof ConfigurationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/continue': {
@@ -306,6 +319,13 @@ declare module '@tanstack/react-router' {
       path: '/partial'
       fullPath: '/partial'
       preLoaderRoute: typeof PartialRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recent': {
+      id: '/recent'
+      path: '/recent'
+      fullPath: '/recent'
+      preLoaderRoute: typeof RecentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/recently-added': {
@@ -421,11 +441,12 @@ const TmdbTvTmdbIdRouteWithChildren = TmdbTvTmdbIdRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  RecentRoute: RecentRoute,
+  ConfigurationRoute: ConfigurationRoute,
   ContinueRoute: ContinueRoute,
   HistoryRoute: HistoryRoute,
   MoviesRoute: MoviesRoute,
   PartialRoute: PartialRoute,
+  RecentRoute: RecentRoute,
   RecentlyAddedRoute: RecentlyAddedRoute,
   RecentlyViewedRoute: RecentlyViewedRoute,
   SettingsRoute: SettingsRoute,

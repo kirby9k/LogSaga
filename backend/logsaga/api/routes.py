@@ -26,7 +26,20 @@ from logsaga.api.schemas import (
     ArtworkOut,
     ArtworkStatusOut,
     CastStatusOut,
+    ConfigAllOut,
+    ConfigAppIn,
+    ConfigAppOut,
+    ConfigJSONRPCIn,
+    ConfigJSONRPCOut,
+    ConfigKodiIn,
+    ConfigKodiOut,
+    ConfigMQTTIn,
+    ConfigMQTTOut,
+    ConfigTMDBIn,
+    ConfigTMDBOut,
+    ConnectionTestOut,
     DailyStatOut,
+    DashboardStatsOut,
     EpisodeSummaryOut,
     HealthOut,
     InProgressOut,
@@ -53,12 +66,11 @@ from logsaga.api.schemas import (
     ShowStatOut,
     ShowSummaryOut,
     StatsOut,
+    TMDBDiscoveryItem,
     TMDBEpisodeOut,
     TMDBMovieOut,
     TMDBPersonOut,
     ActorRecommendationsOut,
-    DashboardStatsOut,
-    TMDBDiscoveryItem,
     TMDBSeasonOut,
     TMDBSeasonSummaryOut,
     TMDBTVOut,
@@ -2865,3 +2877,279 @@ def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStatsOut:
         movie_plays=type_map.get("movie", 0),
         episode_plays=type_map.get("episode", 0),
     )
+
+
+# ---------------------------------------------------------------------------
+# Configuration API helpers
+# ---------------------------------------------------------------------------
+
+def _upsert_config_keys(db: Session, updates: dict[str, Any]) -> None:
+    """Write a dict of config key→value to AppSetting (insert or update)."""
+    from datetime import datetime as _dt
+    for key, value in updates.items():
+        setting = db.get(AppSetting, key)
+        if setting:
+            setting.value = str(value)
+            setting.updated_at = _dt.utcnow()
+        else:
+            db.add(AppSetting(key=key, value=str(value)))
+    db.commit()
+
+
+async def _reload_effective_settings(request: Request) -> None:
+    """Reload effective settings (env + DB) and store on app.state."""
+    from logsaga.config import get_settings as _get_settings
+    from logsaga.main import _load_effective_settings
+    base = _get_settings()
+    new_cfg = _load_effective_settings(base, request.app.state.engine)
+    request.app.state.settings = new_cfg
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/config
+# ---------------------------------------------------------------------------
+@router.get("/admin/config", response_model=ConfigAllOut)
+def get_admin_config(cfg: Settings = Depends(get_cfg)) -> ConfigAllOut:
+    """Return all configuration sections. Credentials are never returned — only is_set booleans."""
+    return ConfigAllOut(
+        kodi=ConfigKodiOut(
+            host=cfg.kodi_db_host,
+            port=cfg.kodi_db_port,
+            user=cfg.kodi_db_user,
+            password_is_set=bool(cfg.kodi_db_password),
+            db_name=cfg.kodi_db_name,
+        ),
+        jsonrpc=ConfigJSONRPCOut(
+            url=cfg.kodi_jsonrpc_url,
+            user=cfg.kodi_jsonrpc_user,
+            password_is_set=bool(cfg.kodi_jsonrpc_password),
+        ),
+        tmdb=ConfigTMDBOut(api_key_is_set=bool(cfg.tmdb_api_key)),
+        mqtt=ConfigMQTTOut(
+            host=cfg.mqtt_host,
+            port=cfg.mqtt_port,
+            user=cfg.mqtt_user,
+            password_is_set=bool(cfg.mqtt_password),
+            discovery_prefix=cfg.mqtt_discovery_prefix,
+        ),
+        app=ConfigAppOut(
+            public_base_url=cfg.public_base_url,
+            log_level=cfg.log_level,
+            tz=cfg.tz,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/admin/config/kodi
+# ---------------------------------------------------------------------------
+@router.put("/admin/config/kodi", response_model=ConnectionTestOut)
+async def update_config_kodi(
+    body: ConfigKodiIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ConnectionTestOut:
+    """Save Kodi DB settings, reset the connection, and run a connection test."""
+    updates: dict[str, Any] = {
+        "kodi_db_host": body.host,
+        "kodi_db_port": body.port,
+        "kodi_db_user": body.user,
+        "kodi_db_name": body.db_name,
+    }
+    if body.password:  # Empty / None = keep existing password
+        updates["kodi_db_password"] = body.password
+    _upsert_config_keys(db, updates)
+    await _reload_effective_settings(request)
+
+    # Reset connections so they reconnect with new credentials on next poll
+    for state in (request.app.state.poll_kodi_state, request.app.state.library_kodi_state):
+        state.conn = None
+        state.db_name = None
+
+    cfg = request.app.state.settings
+    if not cfg.kodi_db_host:
+        return ConnectionTestOut(status="not_configured", message="Host not configured.")
+
+    from logsaga.kodi.db import KodiDBError, KodiDBSecurityError, connect
+    try:
+        conn = await asyncio.to_thread(connect, cfg)
+        conn.close()
+        return ConnectionTestOut(status="ok", message=f"Connected to {cfg.kodi_db_host}.")
+    except (KodiDBError, KodiDBSecurityError) as exc:
+        return ConnectionTestOut(status="error", message=str(exc))
+    except Exception as exc:
+        return ConnectionTestOut(status="error", message=f"Connection failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/admin/config/jsonrpc
+# ---------------------------------------------------------------------------
+@router.put("/admin/config/jsonrpc", response_model=ConnectionTestOut)
+async def update_config_jsonrpc(
+    body: ConfigJSONRPCIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ConnectionTestOut:
+    """Save Kodi JSON-RPC settings and test reachability."""
+    updates: dict[str, Any] = {
+        "kodi_jsonrpc_url": body.url,
+        "kodi_jsonrpc_user": body.user,
+    }
+    if body.password:
+        updates["kodi_jsonrpc_password"] = body.password
+    _upsert_config_keys(db, updates)
+    await _reload_effective_settings(request)
+
+    cfg = request.app.state.settings
+    if not cfg.kodi_jsonrpc_url:
+        return ConnectionTestOut(status="not_configured", message="URL not configured.")
+
+    from logsaga.kodi.jsonrpc import KodiJSONRPC, KodiJSONRPCError
+    try:
+        def _ping() -> None:
+            rpc = KodiJSONRPC(cfg)
+            rpc.call("JSONRPC.Ping")
+        await asyncio.to_thread(_ping)
+        return ConnectionTestOut(status="ok", message=f"Reachable at {cfg.kodi_jsonrpc_url}.")
+    except KodiJSONRPCError as exc:
+        return ConnectionTestOut(status="error", message=str(exc))
+    except Exception as exc:
+        return ConnectionTestOut(status="error", message=f"Connection failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/admin/config/tmdb
+# ---------------------------------------------------------------------------
+@router.put("/admin/config/tmdb", response_model=ConnectionTestOut)
+async def update_config_tmdb(
+    body: ConfigTMDBIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ConnectionTestOut:
+    """Save TMDB API key and validate it with a minimal API call."""
+    if body.api_key:  # Non-empty = replace
+        _upsert_config_keys(db, {"tmdb_api_key": body.api_key})
+    elif body.api_key == "":  # Explicit empty string = clear the key
+        _upsert_config_keys(db, {"tmdb_api_key": ""})
+    # None = leave unchanged
+    await _reload_effective_settings(request)
+
+    cfg = request.app.state.settings
+    if not cfg.tmdb_api_key:
+        return ConnectionTestOut(status="not_configured", message="API key not configured.")
+
+    # Validate the key with a minimal TMDB authentication call
+    import httpx as _httpx
+    api_key_str = cfg.tmdb_api_key.get_secret_value()
+    try:
+        if api_key_str.startswith("eyJ"):
+            headers = {"Authorization": f"Bearer {api_key_str}", "Accept": "application/json"}
+            params: dict[str, str] = {}
+        else:
+            headers = {"Accept": "application/json"}
+            params = {"api_key": api_key_str}
+        async with _httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.themoviedb.org/3/authentication",
+                headers=headers,
+                params=params,
+            )
+        if resp.status_code == 200:
+            return ConnectionTestOut(status="ok", message="API key is valid.")
+        elif resp.status_code == 401:
+            return ConnectionTestOut(status="error", message="Invalid API key.")
+        else:
+            return ConnectionTestOut(status="error", message=f"TMDB returned HTTP {resp.status_code}.")
+    except Exception as exc:
+        return ConnectionTestOut(status="error", message=f"Request failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/admin/config/mqtt
+# ---------------------------------------------------------------------------
+@router.put("/admin/config/mqtt", response_model=ConnectionTestOut)
+async def update_config_mqtt(
+    body: ConfigMQTTIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ConnectionTestOut:
+    """Save MQTT settings, restart the MQTT publisher task, and test connectivity."""
+    updates: dict[str, Any] = {
+        "mqtt_host": body.host,
+        "mqtt_port": body.port,
+        "mqtt_user": body.user,
+        "mqtt_discovery_prefix": body.discovery_prefix,
+    }
+    if body.password:
+        updates["mqtt_password"] = body.password
+    _upsert_config_keys(db, updates)
+    await _reload_effective_settings(request)
+
+    cfg = request.app.state.settings
+
+    # Cancel the existing MQTT task (if any) and start a fresh one with the new config
+    existing_task = request.app.state.mqtt_task
+    if existing_task and not existing_task.done():
+        existing_task.cancel()
+        from contextlib import suppress as _suppress
+        with _suppress(asyncio.CancelledError):
+            await existing_task
+    request.app.state.mqtt_task = None
+
+    if cfg.mqtt_enabled:
+        from logsaga.mqtt.publisher import run_mqtt_publisher
+        new_task = asyncio.create_task(run_mqtt_publisher(cfg, request.app.state.engine))
+        request.app.state.mqtt_task = new_task
+
+    if not cfg.mqtt_host:
+        return ConnectionTestOut(status="not_configured", message="Host not configured.")
+
+    # Test connectivity — brief connect + immediate disconnect
+    import aiomqtt
+    pw_str = cfg.mqtt_password.get_secret_value() or None
+    async def _do_mqtt_test() -> None:
+        async with aiomqtt.Client(
+            hostname=cfg.mqtt_host,
+            port=cfg.mqtt_port,
+            username=cfg.mqtt_user or None,
+            password=pw_str,
+        ):
+            pass
+
+    try:
+        await asyncio.wait_for(_do_mqtt_test(), timeout=5.0)
+        return ConnectionTestOut(status="ok", message=f"Connected to {cfg.mqtt_host}.")
+    except asyncio.TimeoutError:
+        return ConnectionTestOut(status="error", message="Connection timed out.")
+    except Exception as exc:
+        return ConnectionTestOut(status="error", message=f"Connection failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/admin/config/app
+# ---------------------------------------------------------------------------
+@router.put("/admin/config/app", response_model=ConnectionTestOut)
+async def update_config_app(
+    body: ConfigAppIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ConnectionTestOut:
+    """Save application settings (public URL, log level, timezone)."""
+    _upsert_config_keys(db, {
+        "public_base_url": body.public_base_url,
+        "log_level": body.log_level.upper(),
+        "tz": body.tz,
+    })
+    await _reload_effective_settings(request)
+
+    cfg = request.app.state.settings
+
+    # Apply log level immediately without restarting
+    import structlog as _structlog
+    _structlog.configure(
+        wrapper_class=_structlog.make_filtering_bound_logger(
+            logging.getLevelName(cfg.log_level)
+        ),
+    )
+
+    return ConnectionTestOut(status="ok", message="Settings saved.")

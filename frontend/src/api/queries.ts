@@ -600,3 +600,102 @@ export function useDashboardStats() {
     staleTime: 5 * 60_000,
   })
 }
+
+// ---------------------------------------------------------------------------
+// Configuration API types (not in auto-generated types.ts)
+// ---------------------------------------------------------------------------
+export interface ConfigKodiData {
+  host: string; port: number; user: string; password_is_set: boolean; db_name: string
+}
+export interface ConfigJSONRPCData {
+  url: string; user: string; password_is_set: boolean
+}
+export interface ConfigTMDBData {
+  api_key_is_set: boolean
+}
+export interface ConfigMQTTData {
+  host: string; port: number; user: string; password_is_set: boolean; discovery_prefix: string
+}
+export interface ConfigAppData {
+  public_base_url: string; log_level: string; tz: string
+}
+export interface ConfigAllData {
+  kodi: ConfigKodiData; jsonrpc: ConfigJSONRPCData; tmdb: ConfigTMDBData
+  mqtt: ConfigMQTTData; app: ConfigAppData
+}
+export interface ConnectionTestResult {
+  status: 'ok' | 'error' | 'not_configured'
+  message: string
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/config
+// ---------------------------------------------------------------------------
+export function useAdminConfig() {
+  return useQuery({
+    queryKey: ['adminConfig'] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET('/api/admin/config' as never)
+      return assertOk(data as unknown as ConfigAllData, error)
+    },
+    staleTime: 60_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/admin/config/* — config section mutations
+// ---------------------------------------------------------------------------
+export function useUpdateConfigKodi() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: { host: string; port: number; user: string; password?: string | null; db_name: string }) => {
+      const { data, error } = await apiClient.PUT('/api/admin/config/kodi' as never, { body } as never)
+      return assertOk(data as unknown as ConnectionTestResult, error)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminConfig'] }),
+  })
+}
+
+export function useUpdateConfigJSONRPC() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: { url: string; user: string; password?: string | null }) => {
+      const { data, error } = await apiClient.PUT('/api/admin/config/jsonrpc' as never, { body } as never)
+      return assertOk(data as unknown as ConnectionTestResult, error)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminConfig'] }),
+  })
+}
+
+export function useUpdateConfigTMDB() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: { api_key?: string | null }) => {
+      const { data, error } = await apiClient.PUT('/api/admin/config/tmdb' as never, { body } as never)
+      return assertOk(data as unknown as ConnectionTestResult, error)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminConfig'] }),
+  })
+}
+
+export function useUpdateConfigMQTT() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: { host: string; port: number; user: string; password?: string | null; discovery_prefix: string }) => {
+      const { data, error } = await apiClient.PUT('/api/admin/config/mqtt' as never, { body } as never)
+      return assertOk(data as unknown as ConnectionTestResult, error)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminConfig'] }),
+  })
+}
+
+export function useUpdateConfigApp() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: { public_base_url: string; log_level: string; tz: string }) => {
+      const { data, error } = await apiClient.PUT('/api/admin/config/app' as never, { body } as never)
+      return assertOk(data as unknown as ConnectionTestResult, error)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminConfig'] }),
+  })
+}

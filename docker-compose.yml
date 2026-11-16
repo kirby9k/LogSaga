@@ -14,34 +14,36 @@ services:
       - ./data:/config
 
     environment:
-      # ── Kodi MariaDB connection (read-only account) ───────────────────────
-      KODI_DB_HOST: ${KODI_DB_HOST}
-      KODI_DB_PORT: ${KODI_DB_PORT:-3306}
-      KODI_DB_USER: ${KODI_DB_USER:-logsaga}
-      KODI_DB_PASSWORD: ${KODI_DB_PASSWORD}
-
-      # ── Kodi JSON-RPC (Kodi-Headless, used for artwork) ──────────────────
-      KODI_JSONRPC_URL: ${KODI_JSONRPC_URL}
-
-      # ── Poll interval ─────────────────────────────────────────────────────
-      POLL_SECONDS: ${POLL_SECONDS:-30}
-
-      # ── Timezone ──────────────────────────────────────────────────────────
+      # ── Container / deployment (always set here) ──────────────────────────
+      # Timezone: used by the container OS and as default for Kodi timestamp
+      # interpretation. Can also be changed in the Configuration UI.
       TZ: ${TZ:-America/Los_Angeles}
-
-      # ── MQTT (leave unset to disable) ─────────────────────────────────────
-      # MQTT_HOST: ${MQTT_HOST}
-      # MQTT_PORT: ${MQTT_PORT:-1883}
-      # MQTT_USER: ${MQTT_USER}
-      # MQTT_PASSWORD: ${MQTT_PASSWORD}
-
-      # ── App ───────────────────────────────────────────────────────────────
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8790}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # ── PUID/PGID (Unraid default: nobody/users = 99:100) ─────────────────
       PUID: ${PUID:-99}
       PGID: ${PGID:-100}
+
+      # ── Integration config — configure via the UI instead ─────────────────
+      # Open http://<server>:8790/configuration after first start to set up
+      # Kodi DB, Kodi JSON-RPC, TMDB, MQTT, and App settings in the browser.
+      # These env vars still work as a fallback and are auto-imported on first
+      # startup if set, so existing deployments are not broken.
+      #
+      # KODI_DB_HOST: ${KODI_DB_HOST}
+      # KODI_DB_PORT: ${KODI_DB_PORT:-3306}
+      # KODI_DB_USER: ${KODI_DB_USER:-logsaga}
+      # KODI_DB_PASSWORD: ${KODI_DB_PASSWORD}
+      # KODI_JSONRPC_URL: ${KODI_JSONRPC_URL}
+      # TMDB_API_KEY: ${TMDB_API_KEY}
+      # MQTT_HOST: ${MQTT_HOST}
+      # MQTT_PORT: ${MQTT_PORT:-1883}
+      # MQTT_USER: ${MQTT_USER}
+      # MQTT_PASSWORD: ${MQTT_PASSWORD}
+      # PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8790}
+      # LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # ── Poll interval (also editable in Settings UI) ──────────────────────
+      POLL_SECONDS: ${POLL_SECONDS:-30}
 
     healthcheck:
       test: >

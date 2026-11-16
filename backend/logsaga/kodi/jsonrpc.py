@@ -122,7 +122,7 @@ class KodiJSONRPC:
         self._url = cfg.kodi_jsonrpc_url
         auth = None
         if cfg.kodi_jsonrpc_user:
-            auth = (cfg.kodi_jsonrpc_user, cfg.kodi_jsonrpc_password)
+            auth = (cfg.kodi_jsonrpc_user, cfg.kodi_jsonrpc_password.get_secret_value())
         self._client = httpx.Client(
             auth=auth,
             timeout=10.0,

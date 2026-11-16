@@ -58,6 +58,125 @@ def _now_utc() -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# DB-stored configuration management
+# ---------------------------------------------------------------------------
+
+# Config keys that can be stored in AppSetting and override env vars at startup.
+# Keys NOT listed here are always env-only (paths, build info, session rules).
+_CONFIG_KEY_TYPES: dict[str, type] = {
+    "kodi_db_host":          str,
+    "kodi_db_port":          int,
+    "kodi_db_user":          str,
+    "kodi_db_password":      str,  # stored plain; pydantic coerces to SecretStr
+    "kodi_db_name":          str,
+    "kodi_jsonrpc_url":      str,
+    "kodi_jsonrpc_user":     str,
+    "kodi_jsonrpc_password": str,
+    "tmdb_api_key":          str,
+    "mqtt_host":             str,
+    "mqtt_port":             int,
+    "mqtt_user":             str,
+    "mqtt_password":         str,
+    "mqtt_discovery_prefix": str,
+    "public_base_url":       str,
+    "log_level":             str,
+    "tz":                    str,
+}
+_CONFIG_KEYS: frozenset[str] = frozenset(_CONFIG_KEY_TYPES)
+
+
+def _load_effective_settings(base: Any, engine: Any) -> Any:
+    """
+    Merge DB-stored config keys on top of env-var-based Settings.
+
+    DB values win; env vars are the fallback for any key not stored in the DB.
+    Returns a new Settings object — does not mutate the original.
+    """
+    from pydantic import SecretStr as _SecretStr
+
+    from logsaga.config import Settings as _Settings
+    from logsaga.models import AppSetting as _AppSetting
+
+    with sessionmaker(bind=engine)() as db:
+        db_rows = {row.key: row.value for row in db.query(_AppSetting).all()}
+
+    overrides: dict[str, Any] = {}
+    for key, cast_type in _CONFIG_KEY_TYPES.items():
+        if key in db_rows:
+            try:
+                overrides[key] = cast_type(db_rows[key])
+            except (ValueError, TypeError):
+                pass  # bad stored value — fall back to env var
+
+    if not overrides:
+        return base
+
+    # Build init_kwargs from the base settings then apply DB overrides on top.
+    # Passing values as __init__ kwargs takes priority over all pydantic-settings
+    # sources (env vars, .env file), so DB-stored values always win.
+    init_kwargs: dict[str, Any] = {}
+    for name in _Settings.model_fields:
+        val = getattr(base, name)
+        if isinstance(val, _SecretStr):
+            init_kwargs[name] = val.get_secret_value()
+        elif isinstance(val, Path):
+            init_kwargs[name] = str(val)
+        else:
+            init_kwargs[name] = val
+    init_kwargs.update(overrides)
+    return _Settings(**init_kwargs)
+
+
+def _maybe_migrate_env_config(base: Any, engine: Any) -> None:
+    """
+    Copy env-var-based integration config into AppSetting on first startup.
+
+    Runs only once: skipped if any config keys already exist in AppSetting.
+    Also skipped if no significant integration key is set (clean install with
+    no Kodi/TMDB/MQTT configured yet).
+    """
+    from pydantic import SecretStr as _SecretStr
+
+    from logsaga.models import AppSetting as _AppSetting
+
+    with sessionmaker(bind=engine)() as db:
+        existing = db.query(_AppSetting).filter(
+            _AppSetting.key.in_(_CONFIG_KEYS)
+        ).count()
+
+    if existing > 0:
+        return  # Already migrated or user set up config via UI
+
+    def _get_str(key: str) -> str:
+        val = getattr(base, key, "")
+        if isinstance(val, _SecretStr):
+            return val.get_secret_value()
+        return str(val) if val else ""
+
+    # Only migrate if at least one significant integration is configured via env.
+    # Prevents polluting a clean install's DB with all-default values.
+    is_configured = any(
+        _get_str(k)
+        for k in ("kodi_db_host", "tmdb_api_key", "mqtt_host", "kodi_jsonrpc_url")
+    )
+    if not is_configured:
+        return
+
+    with sessionmaker(bind=engine)() as db:
+        entries = 0
+        for key in _CONFIG_KEYS:
+            val_str = _get_str(key)
+            if not val_str:
+                continue
+            if db.get(_AppSetting, key) is None:
+                db.add(_AppSetting(key=key, value=val_str))
+                entries += 1
+        if entries > 0:
+            db.commit()
+            logger.info("config_migrated_from_env", entries=entries)
+
+
+# ---------------------------------------------------------------------------
 # Kodi connection state (held across poll iterations)
 # ---------------------------------------------------------------------------
 class _KodiState:
@@ -768,14 +887,14 @@ async def _library_sync_loop(app: FastAPI) -> None:
 
     Uses a separate Kodi connection from the poll loop.
     """
-    cfg = app.state.settings
-    kodi = _KodiState()
-    interval_s = int(cfg.library_sync_hours * 3600)
+    kodi = app.state.library_kodi_state  # stored on app.state; config API can reset .conn
 
     # Initial sync after a short delay (let the poll loop start first)
     await asyncio.sleep(10)
 
     while True:
+        cfg = app.state.settings  # re-read on each iteration (picks up hot-reloaded config)
+        interval_s = int(cfg.library_sync_hours * 3600)
         try:
             async with app.state.library_sync_lock:
                 connected = await asyncio.to_thread(_ensure_kodi_conn, kodi, cfg)
@@ -828,11 +947,11 @@ async def _poll_loop(app: FastAPI) -> None:
     Uses asyncio.to_thread for the sync PyMySQL calls.
     Reconnects on connection drop; exponential backoff on errors.
     """
-    cfg = app.state.settings
-    kodi = _KodiState()
-    backoff = cfg.poll_seconds
+    kodi = app.state.poll_kodi_state  # stored on app.state; config API can reset .conn
+    backoff = app.state.settings.poll_seconds  # initial value; reset on success
 
     while True:
+        cfg = app.state.settings  # re-read on each iteration (picks up hot-reloaded config)
         try:
             await asyncio.sleep(cfg.poll_seconds)
             connected = await asyncio.to_thread(_ensure_kodi_conn, kodi, cfg)
@@ -906,6 +1025,12 @@ async def lifespan(app: FastAPI):
     )
     Base.metadata.create_all(engine)
 
+    # On first startup: copy env-var config into AppSetting so it can be
+    # managed via the UI without requiring a Docker env-var change.
+    _maybe_migrate_env_config(cfg, engine)
+    # Merge DB-stored config on top of env vars (DB values win).
+    cfg = _load_effective_settings(cfg, engine)
+
     app.state.engine = engine
     app.state.settings = cfg
 
@@ -914,10 +1039,19 @@ async def lifespan(app: FastAPI):
     app.state.library_sync_requested = asyncio.Event()
     app.state.library_sync_lock = asyncio.Lock()
 
+    # Kodi connection state — stored on app.state so the config API can reset
+    # .conn to force a reconnect when credentials change.
+    app.state.poll_kodi_state = _KodiState()
+    app.state.library_kodi_state = _KodiState()
+
     # Mount artwork static files now that cfg is available
     # (Cannot call app.mount inside lifespan cleanly — done at module level below)
 
-    # Background tasks
+    # Background tasks — handles stored on app.state so the config API can
+    # cancel and restart MQTT/cast tasks when their settings change.
+    app.state.mqtt_task: Optional[asyncio.Task] = None
+    app.state.cast_task: Optional[asyncio.Task] = None
+
     tasks = []
     poll_task = asyncio.create_task(_poll_loop(app))
     tasks.append(poll_task)
@@ -927,10 +1061,12 @@ async def lifespan(app: FastAPI):
 
     if cfg.tmdb_enabled:
         cast_task = asyncio.create_task(_cast_sync_loop(app))
+        app.state.cast_task = cast_task
         tasks.append(cast_task)
 
     if cfg.mqtt_enabled:
         mqtt_task = asyncio.create_task(run_mqtt_publisher(cfg, engine))
+        app.state.mqtt_task = mqtt_task
         tasks.append(mqtt_task)
 
     logger.info(

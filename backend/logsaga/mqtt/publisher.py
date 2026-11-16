@@ -576,7 +576,7 @@ async def run_mqtt_publisher(cfg: Settings, engine: Engine) -> None:
                 hostname=cfg.mqtt_host,
                 port=cfg.mqtt_port,
                 username=cfg.mqtt_user or None,
-                password=cfg.mqtt_password or None,
+                password=cfg.mqtt_password.get_secret_value() or None,
             ) as client:
                 backoff = 5  # reset on success
                 await publish_discovery(client, cfg)

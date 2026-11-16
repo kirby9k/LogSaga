@@ -21,6 +21,7 @@ import json
 from datetime import datetime, timedelta
 
 import httpx
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from logsaga.models import TMDBCache
@@ -35,8 +36,10 @@ SEARCH_TTL_DAYS = 1
 class TMDBClient:
     """Async TMDB API client with DB-backed caching."""
 
-    def __init__(self, api_key: str, db: Session) -> None:
+    def __init__(self, api_key: str | SecretStr, db: Session) -> None:
         self._db = db
+        if isinstance(api_key, SecretStr):
+            api_key = api_key.get_secret_value()
         # Read Access Tokens are long JWTs (start with "eyJ").
         # v3 API Keys are short hex strings (~32 chars).
         # Use the right auth method for whichever was configured.

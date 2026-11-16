@@ -9,6 +9,7 @@ import {
   PlusCircle,
   Search,
   Settings2,
+  SlidersHorizontal,
   Timer,
   Tv,
 } from 'lucide-react'
@@ -32,7 +33,8 @@ const NAV = [
   { to: '/recently-added', icon: <PlusCircle size={16} />,   label: 'Recently Added' },
   { to: '/recently-viewed', icon: <Eye size={16} />,         label: 'Recently Viewed' },
   { to: '/stats',          icon: <BarChart2 size={16} />,    label: 'Stats' },
-  { to: '/settings',       icon: <Settings2 size={16} />,    label: 'Settings' },
+  { to: '/settings',       icon: <Settings2 size={16} />,           label: 'Settings' },
+  { to: '/configuration',  icon: <SlidersHorizontal size={16} />,   label: 'Configuration' },
 ]
 
 export function Sidebar({ onClose, onSearchOpen }: SidebarProps) {

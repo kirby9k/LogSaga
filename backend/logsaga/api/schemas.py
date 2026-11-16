@@ -8,7 +8,7 @@ SQLAlchemy ORM objects.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, PlainSerializer
 
@@ -562,3 +562,91 @@ class DashboardStatsOut(BaseModel):
     total_episodes: int = 0
     movie_plays: int = 0      # completed sessions with media_type=movie
     episode_plays: int = 0    # completed sessions with media_type=episode
+
+
+# ---------------------------------------------------------------------------
+# Configuration management (GET /api/admin/config, PUT /api/admin/config/*)
+# ---------------------------------------------------------------------------
+
+class ConfigKodiOut(BaseModel):
+    host: str
+    port: int
+    user: str
+    password_is_set: bool
+    db_name: str
+
+
+class ConfigKodiIn(BaseModel):
+    host: str = ""
+    port: int = 3306
+    user: str = "logsaga"
+    password: Optional[str] = None  # None/"" = keep existing; non-empty = replace
+    db_name: str = ""
+
+
+class ConfigJSONRPCOut(BaseModel):
+    url: str
+    user: str
+    password_is_set: bool
+
+
+class ConfigJSONRPCIn(BaseModel):
+    url: str = ""
+    user: str = ""
+    password: Optional[str] = None  # None/"" = keep existing; non-empty = replace
+
+
+class ConfigTMDBOut(BaseModel):
+    api_key_is_set: bool
+
+
+class ConfigTMDBIn(BaseModel):
+    api_key: Optional[str] = None  # None/"" = keep existing; non-empty = replace
+
+
+class ConfigMQTTOut(BaseModel):
+    host: str
+    port: int
+    user: str
+    password_is_set: bool
+    discovery_prefix: str
+
+
+class ConfigMQTTIn(BaseModel):
+    host: str = ""
+    port: int = 1883
+    user: str = ""
+    password: Optional[str] = None  # None/"" = keep existing; non-empty = replace
+    discovery_prefix: str = "homeassistant"
+
+
+class ConfigAppOut(BaseModel):
+    public_base_url: str
+    log_level: str
+    tz: str
+
+
+class ConfigAppIn(BaseModel):
+    public_base_url: str = "http://localhost:8790"
+    log_level: str = "INFO"
+    tz: str = "America/Los_Angeles"
+
+
+class ConfigAllOut(BaseModel):
+    kodi: ConfigKodiOut
+    jsonrpc: ConfigJSONRPCOut
+    tmdb: ConfigTMDBOut
+    mqtt: ConfigMQTTOut
+    app: ConfigAppOut
+
+
+class ConnectionTestOut(BaseModel):
+    """Result of a configuration save + connection test.
+
+    status values:
+      "ok"             — connected/validated successfully (show green badge)
+      "error"          — configured but connection/validation failed (show red badge)
+      "not_configured" — host/key is empty; nothing to test (show gray badge)
+    """
+    status: Literal["ok", "error", "not_configured"]
+    message: str

@@ -7,7 +7,7 @@ can snapshot the active values at rebuild time, making rebuilds reproducible.
 
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,13 +23,13 @@ class Settings(BaseSettings):
     kodi_db_host: str = ""
     kodi_db_port: int = 3306
     kodi_db_user: str = "logsaga"
-    kodi_db_password: str
+    kodi_db_password: SecretStr = SecretStr("")
     kodi_db_name: str = ""  # empty = auto-detect highest MyVideos%
 
     # --- Kodi JSON-RPC ---
     kodi_jsonrpc_url: str = ""
     kodi_jsonrpc_user: str = ""
-    kodi_jsonrpc_password: str = ""
+    kodi_jsonrpc_password: SecretStr = SecretStr("")
 
     # --- Polling ---
     poll_seconds: int = 30
@@ -44,11 +44,11 @@ class Settings(BaseSettings):
     mqtt_host: str = ""
     mqtt_port: int = 1883
     mqtt_user: str = ""
-    mqtt_password: str = ""
+    mqtt_password: SecretStr = SecretStr("")
     mqtt_discovery_prefix: str = "homeassistant"
 
     # --- TMDB (optional — search and manual history features; leave blank to disable) ---
-    tmdb_api_key: str = ""
+    tmdb_api_key: SecretStr = SecretStr("")
 
     # --- App ---
     public_base_url: str = "http://localhost:8790"
