@@ -414,7 +414,7 @@ export function useTriggerJob(jobName: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async () => {
-      const endpoint = `/api/admin/${jobName.replace('_', '-')}` as never
+      const endpoint = `/api/admin/${jobName.replace(/_/g, '-')}` as never
       const { data, error } = await apiClient.POST(endpoint)
       return assertOk(data, error)
     },

@@ -41,8 +41,9 @@ const SETTING_META: Record<keyof AdminSettings, { label: string; desc: string; u
 const JOB_META: Record<string, { label: string; desc: string }> = {
   poll:             { label: 'Poll',              desc: 'Check Kodi for new play activity immediately' },
   sync_library:     { label: 'Sync Library',      desc: 'Refresh movies, episodes and shows from Kodi' },
-  fetch_artwork:    { label: 'Fetch Artwork',      desc: 'Download missing artwork for all library items' },
-  enrich_metadata:  { label: 'Enrich Metadata',   desc: 'Backfill plot, year, genres and codec info from Kodi' },
+  fetch_artwork:    { label: 'Fetch Artwork',      desc: 'Download artwork for all library items (parallel)' },
+  enrich_cast:      { label: 'Enrich Cast',        desc: 'Fetch cast from TMDB for items missing actor info' },
+  enrich_tmdb_ids:  { label: 'Enrich TMDB IDs',   desc: 'Search TMDB to assign IDs to unmatched movies/shows' },
   rebuild_sessions: { label: 'Rebuild Sessions',  desc: 'Re-derive all sessions from raw observations' },
 }
 

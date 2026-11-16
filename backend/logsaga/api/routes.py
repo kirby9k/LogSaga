@@ -1651,7 +1651,8 @@ _job_state: dict[str, dict] = {
     "poll":             {"running": False, "last_run": None, "last_result": None},
     "sync_library":     {"running": False, "last_run": None, "last_result": None},
     "fetch_artwork":    {"running": False, "last_run": None, "last_result": None},
-    "enrich_metadata":  {"running": False, "last_run": None, "last_result": None},
+    "enrich_cast":      {"running": False, "last_run": None, "last_result": None},
+    "enrich_tmdb_ids":  {"running": False, "last_run": None, "last_result": None},
     "rebuild_sessions": {"running": False, "last_run": None, "last_result": None},
 }
 
@@ -1724,96 +1725,292 @@ async def _do_sync_library(engine, cfg: Settings) -> str:
 
 
 async def _do_fetch_artwork(engine, cfg: Settings) -> str:
-    """Fetch artwork for all items with a Kodi connection."""
-    from logsaga.artwork.cache import fetch_all_artwork
+    """Fetch artwork for all Kodi-library items using async parallel HTTP."""
+    import httpx
+    from logsaga.artwork.cache import fetch_artwork_for_item_async
     from logsaga.kodi.db import connect, detect_db_name
     from logsaga.kodi.jsonrpc import KodiJSONRPC
     from sqlalchemy.orm import sessionmaker as _sm
 
-    def _sync() -> str:
-        db_name = detect_db_name(cfg)
-        conn = connect(cfg, db_name=db_name)
-        rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
-        try:
-            SessionLocal = _sm(bind=engine, autoflush=False)
-            with SessionLocal() as db:
-                item_ids = [
-                    r[0] for r in
-                    db.query(MediaItem.id)
-                    .filter(MediaItem.kodi_media_id.isnot(None))
-                    .all()
-                ]
-            total_updated = 0
-            for iid in item_ids:
-                with SessionLocal() as db:
-                    _, updated = fetch_all_artwork(conn, rpc, db, cfg, item_id=iid, force=True)
-                    db.commit()
-                    total_updated += updated
-            return f"{len(item_ids)} items, {total_updated} artwork rows updated"
-        finally:
-            conn.close()
-            if rpc:
-                rpc.close()
+    _CONCURRENCY = 5
+    db_name = detect_db_name(cfg)
+    kodi_conn = connect(cfg, db_name=db_name)
+    rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
+    try:
+        SessionLocal = _sm(bind=engine, autoflush=False)
+        with SessionLocal() as db:
+            item_ids = [
+                r[0] for r in
+                db.query(MediaItem.id)
+                .filter(MediaItem.kodi_media_id.isnot(None))
+                .all()
+            ]
 
-    return await asyncio.to_thread(_sync)
+        sem = asyncio.Semaphore(_CONCURRENCY)
+        total_updated = 0
+
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async def fetch_one(iid: int) -> int:
+                async with sem:
+                    with SessionLocal() as db:
+                        item = db.get(MediaItem, iid)
+                        if item is None:
+                            return 0
+                        try:
+                            count = await fetch_artwork_for_item_async(
+                                item, kodi_conn, rpc, db, cfg, client, force=True
+                            )
+                            db.commit()
+                            return count
+                        except Exception as exc:
+                            db.rollback()
+                            log.warning("fetch_artwork item=%d: %s", iid, exc)
+                            return 0
+
+            for coro in asyncio.as_completed([fetch_one(iid) for iid in item_ids]):
+                total_updated += await coro
+
+        return f"{len(item_ids)} items scanned, {total_updated} artwork rows updated"
+    finally:
+        kodi_conn.close()
+        if rpc:
+            rpc.close()
 
 
-async def _do_enrich_metadata(engine, cfg: Settings) -> str:
-    """Enrich metadata for items missing plot or year."""
-    from logsaga.kodi.db import connect, detect_db_name, enrich_item as _enrich_item
-    from sqlalchemy import or_
+async def _do_enrich_cast(engine, cfg: Settings) -> str:
+    """Populate cast rows for shows/movies that have a tmdb_id but no cast yet."""
+    if not cfg.tmdb_api_key:
+        return "TMDB_API_KEY not configured"
+
+    from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+    from logsaga.models import ItemCast, KodiShow, MediaItem
+    from logsaga.tmdb.client import TMDBClient
     from sqlalchemy.orm import sessionmaker as _sm
 
-    def _sync() -> str:
-        db_name = detect_db_name(cfg)
-        conn = connect(cfg, db_name=db_name)
-        try:
-            with _sm(bind=engine)() as db:
-                items = (
-                    db.query(MediaItem)
-                    .filter(
-                        MediaItem.kodi_media_id.isnot(None),
-                        or_(MediaItem.plot.is_(None), MediaItem.year.is_(None)),
-                    )
-                    .order_by(MediaItem.id)
-                    .all()
-                )
-                enriched = 0
-                for item in items:
-                    identity = _enrich_item(
-                        conn, item.media_type, item.kodi_media_id, item.kodi_file_id
-                    )
-                    if identity is None:
-                        continue
-                    item.plot = identity.plot
-                    item.genres = identity.genres
-                    item.release_date = identity.release_date
-                    item.director = identity.director
-                    item.video_codec = identity.video_codec
-                    item.video_width = identity.video_width
-                    item.video_height = identity.video_height
-                    item.hdr_type = identity.hdr_type
-                    item.audio_codec = identity.audio_codec
-                    item.audio_channels = identity.audio_channels
-                    if identity.release_date:
-                        try:
-                            item.year = int(identity.release_date[:4])
-                        except (ValueError, IndexError):
-                            pass
-                    enriched += 1
-                    if enriched % 100 == 0:
-                        db.commit()
-                db.commit()
-            return f"{enriched} items enriched"
-        finally:
-            conn.close()
+    _CONCURRENCY = 5
+    SessionLocal = _sm(bind=engine, autoflush=False)
+    sem = asyncio.Semaphore(_CONCURRENCY)
 
-    return await asyncio.to_thread(_sync)
+    with SessionLocal() as db:
+        shows_with_cast = {
+            row[0]
+            for row in db.query(ItemCast.show_id)
+            .filter(ItemCast.show_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        show_ids = [
+            row[0]
+            for row in db.query(KodiShow.id)
+            .filter(KodiShow.tmdb_id.isnot(None))
+            .all()
+            if row[0] not in shows_with_cast
+        ]
+        movies_with_cast = {
+            row[0]
+            for row in db.query(ItemCast.media_item_id)
+            .filter(ItemCast.media_item_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        movie_item_ids = [
+            row[0]
+            for row in db.query(MediaItem.id)
+            .filter(
+                MediaItem.media_type == "movie",
+                MediaItem.tmdb_id.isnot(None),
+            )
+            .all()
+            if row[0] not in movies_with_cast
+        ]
+
+    total = len(show_ids) + len(movie_item_ids)
+    if total == 0:
+        return "No items needing cast"
+
+    shows_done = 0
+    movies_done = 0
+
+    async def enrich_show(show_id: int) -> tuple[str, bool]:
+        async with sem:
+            with SessionLocal() as db:
+                show = db.get(KodiShow, show_id)
+                if show is None or not show.tmdb_id:
+                    return ("show", False)
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    await tmdb.tv_detail(show.tmdb_id)
+                    populate_cast_for_show(show, db)
+                    return ("show", True)
+                except Exception as exc:
+                    db.rollback()
+                    log.warning("enrich_cast show=%d: %s", show_id, exc)
+                    return ("show", False)
+
+    async def enrich_movie(item_id: int) -> tuple[str, bool]:
+        async with sem:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, item_id)
+                if item is None or not item.tmdb_id:
+                    return ("movie", False)
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    await tmdb.movie_detail(item.tmdb_id)
+                    populate_cast_for_item(item, db)
+                    return ("movie", True)
+                except Exception as exc:
+                    db.rollback()
+                    log.warning("enrich_cast movie=%d: %s", item_id, exc)
+                    return ("movie", False)
+
+    all_coros = (
+        [enrich_show(sid) for sid in show_ids]
+        + [enrich_movie(iid) for iid in movie_item_ids]
+    )
+
+    for coro in asyncio.as_completed(all_coros):
+        kind, success = await coro
+        if success:
+            if kind == "show":
+                shows_done += 1
+            else:
+                movies_done += 1
+
+    return f"{shows_done}/{len(show_ids)} shows, {movies_done}/{len(movie_item_ids)} movies enriched"
+
+
+async def _do_enrich_tmdb_ids(engine, cfg: Settings) -> str:
+    """Search TMDB to assign IDs to movies/shows that are missing them."""
+    if not cfg.tmdb_api_key:
+        return "TMDB_API_KEY not configured"
+
+    import re
+    import unicodedata
+    from logsaga.models import KodiShow, MediaItem
+    from logsaga.tmdb.client import TMDBClient
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    def _norm(title: str) -> str:
+        t = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
+        t = re.sub(r"[^\w\s]", " ", t.lower())
+        return re.sub(r"\s+", " ", t).strip()
+
+    def _pick_movie(results: list[dict], local_title: str, local_year: int | None) -> int | None:
+        ln = _norm(local_title)
+        for r in results[:5]:
+            if ln not in (_norm(r.get("title", "")), _norm(r.get("original_title", ""))):
+                continue
+            if local_year:
+                rd = r.get("release_date", "")
+                ty = int(rd[:4]) if rd and len(rd) >= 4 else None
+                if ty and abs(ty - local_year) > 1:
+                    continue
+            return r.get("id")
+        return None
+
+    def _pick_tv(results: list[dict], local_title: str, local_year: int | None) -> int | None:
+        ln = _norm(local_title)
+        for r in results[:5]:
+            if ln not in (_norm(r.get("name", "")), _norm(r.get("original_name", ""))):
+                continue
+            if local_year:
+                fad = r.get("first_air_date", "")
+                ty = int(fad[:4]) if fad and len(fad) >= 4 else None
+                if ty and abs(ty - local_year) > 1:
+                    continue
+            return r.get("id")
+        return None
+
+    _CONCURRENCY = 5
+    SessionLocal = _sm(bind=engine, autoflush=False)
+    sem = asyncio.Semaphore(_CONCURRENCY)
+
+    with SessionLocal() as db:
+        movie_item_ids = [
+            row[0]
+            for row in db.query(MediaItem.id)
+            .filter(
+                MediaItem.media_type == "movie",
+                MediaItem.tmdb_id.is_(None),
+            )
+            .all()
+        ]
+        show_ids = [
+            row[0]
+            for row in db.query(KodiShow.id)
+            .filter(KodiShow.tmdb_id.is_(None))
+            .all()
+        ]
+
+    total = len(movie_item_ids) + len(show_ids)
+    if total == 0:
+        return "No items needing TMDB IDs"
+
+    movies_matched = 0
+    shows_matched = 0
+
+    async def resolve_movie(item_id: int) -> tuple[str, bool]:
+        async with sem:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, item_id)
+                if item is None or item.tmdb_id:
+                    return ("movie", False)
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    data = await tmdb.search_movie(item.title, item.year)
+                    matched_id = _pick_movie(data.get("results", []), item.title, item.year)
+                    if matched_id:
+                        item.tmdb_id = str(matched_id)
+                        db.commit()
+                        return ("movie", True)
+                    return ("movie", False)
+                except Exception as exc:
+                    db.rollback()
+                    log.warning("enrich_tmdb_ids movie=%d: %s", item_id, exc)
+                    return ("movie", False)
+
+    async def resolve_show(show_id: int) -> tuple[str, bool]:
+        async with sem:
+            with SessionLocal() as db:
+                show = db.get(KodiShow, show_id)
+                if show is None or show.tmdb_id:
+                    return ("show", False)
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    data = await tmdb.search_tv(show.title, show.year)
+                    matched_id = _pick_tv(data.get("results", []), show.title, show.year)
+                    if matched_id:
+                        show.tmdb_id = str(matched_id)
+                        db.commit()
+                        return ("show", True)
+                    return ("show", False)
+                except Exception as exc:
+                    db.rollback()
+                    log.warning("enrich_tmdb_ids show=%d: %s", show_id, exc)
+                    return ("show", False)
+
+    all_coros = (
+        [resolve_movie(iid) for iid in movie_item_ids]
+        + [resolve_show(sid) for sid in show_ids]
+    )
+
+    for coro in asyncio.as_completed(all_coros):
+        kind, matched = await coro
+        if matched:
+            if kind == "movie":
+                movies_matched += 1
+            else:
+                shows_matched += 1
+
+    return (
+        f"{movies_matched}/{len(movie_item_ids)} movies matched, "
+        f"{shows_matched}/{len(show_ids)} shows matched"
+    )
 
 
 # ---------------------------------------------------------------------------
 # GET /admin/jobs
-# POST /admin/poll, /sync-library, /fetch-artwork, /enrich-metadata
+# POST /admin/poll, /sync-library, /fetch-artwork, /enrich-cast, /enrich-tmdb-ids
 # ---------------------------------------------------------------------------
 
 @router.get("/admin/jobs", response_model=list[JobStateOut])
@@ -1857,13 +2054,22 @@ async def trigger_fetch_artwork(request: Request, cfg: Settings = Depends(get_cf
     return {"message": "Artwork fetch triggered"}
 
 
-@router.post("/admin/enrich-metadata")
-async def trigger_enrich_metadata(request: Request, cfg: Settings = Depends(get_cfg)):
-    """Trigger metadata enrichment for all items missing plot/year (fire and forget)."""
-    if _job_state["enrich_metadata"]["running"]:
+@router.post("/admin/enrich-cast")
+async def trigger_enrich_cast(request: Request, cfg: Settings = Depends(get_cfg)):
+    """Trigger cast enrichment for all shows/movies missing cast rows (fire and forget)."""
+    if _job_state["enrich_cast"]["running"]:
         raise HTTPException(409, "Job already running")
-    asyncio.create_task(_run_job("enrich_metadata", _do_enrich_metadata(request.app.state.engine, cfg)))
-    return {"message": "Metadata enrichment triggered"}
+    asyncio.create_task(_run_job("enrich_cast", _do_enrich_cast(request.app.state.engine, cfg)))
+    return {"message": "Cast enrichment triggered"}
+
+
+@router.post("/admin/enrich-tmdb-ids")
+async def trigger_enrich_tmdb_ids(request: Request, cfg: Settings = Depends(get_cfg)):
+    """Search TMDB to assign IDs to items missing them (fire and forget)."""
+    if _job_state["enrich_tmdb_ids"]["running"]:
+        raise HTTPException(409, "Job already running")
+    asyncio.create_task(_run_job("enrich_tmdb_ids", _do_enrich_tmdb_ids(request.app.state.engine, cfg)))
+    return {"message": "TMDB ID enrichment triggered"}
 
 
 # ---------------------------------------------------------------------------
