@@ -112,12 +112,16 @@ class TMDBClient:
         )
 
     async def person_detail(self, tmdb_person_id: int) -> dict:
-        """Fetch person details (biography, birthday, place_of_birth, profile_path)."""
+        """Fetch person details including external IDs (IMDb, Instagram, Wikidata).
+
+        Returns biography, birthday, place_of_birth, profile_path, imdb_id, and
+        an external_ids dict with instagram_id, wikidata_id, etc.
+        """
         cache_key = f"person:{tmdb_person_id}"
         return await self._get_cached(
             cache_key,
             f"/person/{tmdb_person_id}",
-            {"language": "en-US"},
+            {"append_to_response": "external_ids", "language": "en-US"},
             DETAIL_TTL_DAYS,
         )
 

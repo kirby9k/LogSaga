@@ -590,6 +590,9 @@ export interface components {
       birthday?: string | null;
       birthplace?: string | null;
       profile_url?: string | null;
+      imdb_id?: string | null;
+      instagram_id?: string | null;
+      wikidata_id?: string | null;
       watched_items: components["schemas"]["ActorAppearanceOut"][];
       library_items: components["schemas"]["ActorAppearanceOut"][];
     };

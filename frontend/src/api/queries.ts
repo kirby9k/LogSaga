@@ -566,6 +566,22 @@ export function useActor(tmdbPersonId: number | null) {
 // ---------------------------------------------------------------------------
 // GET /api/actors/{tmdb_person_id}/recommendations
 // ---------------------------------------------------------------------------
+export interface ActorDiscoveryItem {
+  tmdb_id: number
+  media_type: string
+  title: string
+  poster_url: string | null
+  year: number | null
+  popularity: number | null
+  in_library: boolean
+  watched: boolean
+}
+
+export interface ActorRecommendationsData {
+  most_popular: ActorDiscoveryItem[]
+  most_recent: ActorDiscoveryItem[]
+}
+
 export function useActorRecommendations(tmdbPersonId: number | null) {
   return useQuery({
     queryKey: ['actorRecommendations', tmdbPersonId] as const,
@@ -574,13 +590,83 @@ export function useActorRecommendations(tmdbPersonId: number | null) {
         '/api/actors/{tmdb_person_id}/recommendations' as never,
         { params: { path: { tmdb_person_id: tmdbPersonId! } } } as never,
       )
-      return assertOk(
-        data as unknown as import('./types').components['schemas']['ActorRecommendationsOut'],
-        error,
-      )
+      return assertOk(data as unknown as ActorRecommendationsData, error)
     },
     enabled: tmdbPersonId !== null,
     staleTime: 24 * 60 * 60_000,  // 24 h (cached 30 days server-side)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/actors/{tmdb_person_id}/filmography
+// ---------------------------------------------------------------------------
+export type CreditType = 'acting' | 'self' | 'production' | 'unknown'
+
+export interface FilmographyItemData {
+  tmdb_id: number
+  media_type: string
+  title: string
+  year: number | null
+  poster_url: string | null
+  character: string | null
+  job: string | null
+  credit_type: CreditType
+  item_id: number | null
+  show_id: number | null
+  in_library: boolean
+  watched: boolean
+  watched_episodes: number | null
+  total_episodes: number | null
+}
+
+export interface ActorFilmographyData {
+  movies: FilmographyItemData[]
+  tv_shows: FilmographyItemData[]
+}
+
+export function useActorFilmography(tmdbPersonId: number | null) {
+  return useQuery({
+    queryKey: ['actorFilmography', tmdbPersonId] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET(
+        '/api/actors/{tmdb_person_id}/filmography' as never,
+        { params: { path: { tmdb_person_id: tmdbPersonId! } } } as never,
+      )
+      return assertOk(data as unknown as ActorFilmographyData, error)
+    },
+    enabled: tmdbPersonId !== null,
+    staleTime: 24 * 60 * 60_000,  // 24 h (TMDB combined_credits cached 30 days server-side)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/actors/{tmdb_person_id}/recently-played
+// ---------------------------------------------------------------------------
+export interface ActorRecentSessionData {
+  session_id: number
+  media_type: string
+  title: string
+  show_title: string | null
+  season_number: number | null
+  episode_number: number | null
+  completed_at: string | null
+  item_id: number | null
+  show_id: number | null
+  poster_url: string | null
+}
+
+export function useActorRecentSessions(tmdbPersonId: number | null) {
+  return useQuery({
+    queryKey: ['actorRecentSessions', tmdbPersonId] as const,
+    queryFn: async () => {
+      const { data, error } = await apiClient.GET(
+        '/api/actors/{tmdb_person_id}/recently-played' as never,
+        { params: { path: { tmdb_person_id: tmdbPersonId! } } } as never,
+      )
+      return assertOk(data as unknown as ActorRecentSessionData[], error)
+    },
+    enabled: tmdbPersonId !== null,
+    staleTime: 5 * 60_000,  // 5 min (watch history changes frequently)
   })
 }
 

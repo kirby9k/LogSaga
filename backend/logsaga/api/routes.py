@@ -21,7 +21,10 @@ from logsaga.api.deps import get_cfg, get_db, get_tmdb_client, get_tmdb_client_o
 from logsaga.api.schemas import (
     ActorAppearanceOut,
     ActorDetailOut,
+    ActorFilmographyOut,
+    ActorRecentSessionOut,
     AdminSettingsIn,
+    FilmographyItemOut,
     AdminSettingsOut,
     ArtworkOut,
     ArtworkStatusOut,
@@ -186,6 +189,10 @@ async def _refresh_actor_bio_bg(app, tmdb_person_id: int) -> None:
             person.biography = bio_data.get("biography") or None
             person.birthday = bio_data.get("birthday") or None
             person.birthplace = bio_data.get("place_of_birth") or None
+            person.imdb_id = bio_data.get("imdb_id") or None
+            ext = bio_data.get("external_ids") or {}
+            person.instagram_id = ext.get("instagram_id") or None
+            person.wikidata_id = ext.get("wikidata_id") or None
             person.fetched_at = now
             db.commit()
     except Exception as exc:
@@ -2529,6 +2536,10 @@ async def get_actor(
             person.biography = bio_data.get("biography") or None
             person.birthday = bio_data.get("birthday") or None
             person.birthplace = bio_data.get("place_of_birth") or None
+            person.imdb_id = bio_data.get("imdb_id") or None
+            ext = bio_data.get("external_ids") or {}
+            person.instagram_id = ext.get("instagram_id") or None
+            person.wikidata_id = ext.get("wikidata_id") or None
             person.fetched_at = now
             person.bio_refresh_attempted_at = now
             db.commit()
@@ -2572,6 +2583,9 @@ async def get_actor(
         birthday=person.birthday,
         birthplace=person.birthplace,
         profile_url=profile_url,
+        imdb_id=person.imdb_id,
+        instagram_id=person.instagram_id,
+        wikidata_id=person.wikidata_id,
         watched_items=watched_items,
         library_items=library_items,
     )
@@ -2759,9 +2773,10 @@ async def get_actor_recommendations(
     db: Session = Depends(get_db),
     tmdb: Optional["TMDBClient"] = Depends(get_tmdb_client_optional),  # type: ignore[name-defined]
 ) -> ActorRecommendationsOut:
-    """Return popular and recent TMDB titles featuring an actor that are NOT in the local library.
+    """Return popular and recent TMDB titles featuring an actor.
 
-    Both sections contain up to 10 items, with no duplicates between them.
+    Includes items already in the local library (marked with in_library/watched).
+    Both sections contain up to 12 items, with no duplicates between them.
     Results are cached in tmdb_cache for 30 days.
     """
     from logsaga.tmdb.client import TMDBClient
@@ -2775,7 +2790,7 @@ async def get_actor_recommendations(
         log.warning("Failed to fetch person credits for %d: %s", tmdb_person_id, exc)
         return ActorRecommendationsOut()
 
-    # Build sets of TMDB IDs already in local library
+    # Build sets of TMDB IDs in local library
     local_movie_tmdb_ids: set[int] = {
         int(r[0]) for r in db.query(MediaItem.tmdb_id).filter(
             MediaItem.media_type == MediaType.movie,
@@ -2787,8 +2802,28 @@ async def get_actor_recommendations(
             KodiShow.tmdb_id.isnot(None)
         ).all()
     }
+    # Build sets of watched TMDB IDs
+    watched_movie_tmdb_ids: set[int] = {
+        int(r[0]) for r in db.query(MediaItem.tmdb_id)
+        .join(WatchSession, WatchSession.media_item_id == MediaItem.id)
+        .filter(
+            MediaItem.media_type == MediaType.movie,
+            MediaItem.tmdb_id.isnot(None),
+            WatchSession.status == SessionStatus.completed,
+        ).all()
+    }
+    watched_show_tmdb_ids: set[int] = {
+        int(r[0]) for r in db.query(KodiShow.tmdb_id)
+        .join(MediaItem, MediaItem.show_id == KodiShow.id)
+        .join(WatchSession, WatchSession.media_item_id == MediaItem.id)
+        .filter(
+            KodiShow.tmdb_id.isnot(None),
+            WatchSession.status == SessionStatus.completed,
+        ).all()
+    }
 
-    _DISCOVERY_LIMIT = 10
+    _DISCOVERY_LIMIT = 12
+    _EXCLUDED_GENRES = {10767, 10763, 10764}
 
     def _to_discovery(entry: dict) -> TMDBDiscoveryItem | None:
         media_type = entry.get("media_type")
@@ -2797,13 +2832,7 @@ async def get_actor_recommendations(
         tmdb_id = entry.get("id")
         if not tmdb_id:
             return None
-        # Skip library items
-        if media_type == "movie" and tmdb_id in local_movie_tmdb_ids:
-            return None
-        if media_type == "tv" and tmdb_id in local_show_tmdb_ids:
-            return None
         # Skip talk shows, news, and reality TV (TMDB genre IDs 10767, 10763, 10764)
-        _EXCLUDED_GENRES = {10767, 10763, 10764}
         genre_ids = set(entry.get("genre_ids") or [])
         if genre_ids & _EXCLUDED_GENRES:
             return None
@@ -2815,6 +2844,14 @@ async def get_actor_recommendations(
         except (ValueError, TypeError):
             pass
         poster_path = entry.get("poster_path")
+        in_lib = (
+            (media_type == "movie" and tmdb_id in local_movie_tmdb_ids)
+            or (media_type == "tv" and tmdb_id in local_show_tmdb_ids)
+        )
+        is_watched = (
+            (media_type == "movie" and tmdb_id in watched_movie_tmdb_ids)
+            or (media_type == "tv" and tmdb_id in watched_show_tmdb_ids)
+        )
         return TMDBDiscoveryItem(
             tmdb_id=tmdb_id,
             media_type=media_type,
@@ -2822,6 +2859,8 @@ async def get_actor_recommendations(
             poster_url=TMDBClient.poster_url(poster_path, "w342") if poster_path else None,
             year=year,
             popularity=entry.get("popularity"),
+            in_library=in_lib,
+            watched=is_watched,
         )
 
     cast_entries = credits_data.get("cast", [])
@@ -2839,6 +2878,307 @@ async def get_actor_recommendations(
     )[:_DISCOVERY_LIMIT]
 
     return ActorRecommendationsOut(most_popular=popular_items, most_recent=recent_items)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/actors/{tmdb_person_id}/filmography
+# ---------------------------------------------------------------------------
+@router.get("/actors/{tmdb_person_id}/filmography", response_model=ActorFilmographyOut)
+async def get_actor_filmography(
+    tmdb_person_id: int,
+    db: Session = Depends(get_db),
+    tmdb: Optional["TMDBClient"] = Depends(get_tmdb_client_optional),  # type: ignore[name-defined]
+) -> ActorFilmographyOut:
+    """Full TMDB filmography for an actor, split into movies and TV shows.
+
+    Each item has a credit_type ("acting", "self", "production", "unknown") derived
+    from the TMDB combined_credits cast/crew arrays.  Library membership and watched
+    status are checked against the local DB.
+
+    Results are cached in tmdb_cache for 30 days (same cache as recommendations).
+    """
+    from logsaga.tmdb.client import TMDBClient
+
+    if tmdb is None:
+        return ActorFilmographyOut()
+
+    try:
+        credits_data = await tmdb.person_credits(tmdb_person_id)
+    except Exception as exc:
+        log.warning("Failed to fetch person credits for filmography %d: %s", tmdb_person_id, exc)
+        return ActorFilmographyOut()
+
+    _EXCLUDED_GENRES = {10767, 10763, 10764}
+
+    # --- Library/watched lookup tables ---
+    # Movies: tmdb_id → MediaItem.id
+    movie_tmdb_to_item_id: dict[int, int] = {
+        int(r[0]): r[1]
+        for r in db.query(MediaItem.tmdb_id, MediaItem.id).filter(
+            MediaItem.media_type == MediaType.movie,
+            MediaItem.tmdb_id.isnot(None),
+        ).all()
+    }
+    # Watched movie tmdb_ids
+    watched_movie_tmdb_ids: set[int] = {
+        int(r[0]) for r in db.query(MediaItem.tmdb_id)
+        .join(WatchSession, WatchSession.media_item_id == MediaItem.id)
+        .filter(
+            MediaItem.media_type == MediaType.movie,
+            MediaItem.tmdb_id.isnot(None),
+            WatchSession.status == SessionStatus.completed,
+        ).all()
+    }
+    # TV shows: tmdb_id → (show_id, watched_eps, total_eps)
+    show_rows = db.query(KodiShow.tmdb_id, KodiShow.id).filter(
+        KodiShow.tmdb_id.isnot(None)
+    ).all()
+    show_tmdb_to_id: dict[int, int] = {int(r[0]): r[1] for r in show_rows}
+
+    # Watched/total episode counts per show
+    watched_eps_by_show: dict[int, int] = {}
+    total_eps_by_show: dict[int, int] = {}
+    for tmdb_id_val, show_id_val in show_tmdb_to_id.items():
+        total = (
+            db.query(func.count(MediaItem.id))
+            .filter(MediaItem.show_id == show_id_val, MediaItem.media_type == MediaType.episode)
+            .scalar() or 0
+        )
+        watched = (
+            db.query(func.count(func.distinct(WatchSession.media_item_id)))
+            .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+            .filter(MediaItem.show_id == show_id_val, WatchSession.status == SessionStatus.completed)
+            .scalar() or 0
+        )
+        total_eps_by_show[show_id_val] = total
+        watched_eps_by_show[show_id_val] = watched
+
+    def _year_from_entry(entry: dict) -> int | None:
+        date_str = entry.get("release_date") or entry.get("first_air_date") or ""
+        try:
+            return int(date_str[:4]) if date_str else None
+        except (ValueError, TypeError):
+            return None
+
+    def _credit_type_from_cast(character: str | None) -> str:
+        if not character:
+            return "unknown"
+        if character.lower().startswith("self"):
+            return "self"
+        return "acting"
+
+    seen: set[tuple[int, str, str]] = set()  # (tmdb_id, media_type, credit_type)
+    movies: list[FilmographyItemOut] = []
+    tv_shows: list[FilmographyItemOut] = []
+
+    # Process cast entries
+    for entry in credits_data.get("cast", []):
+        media_type = entry.get("media_type")
+        if media_type not in ("movie", "tv"):
+            continue
+        tmdb_id = entry.get("id")
+        if not tmdb_id:
+            continue
+        genre_ids = set(entry.get("genre_ids") or [])
+        if genre_ids & _EXCLUDED_GENRES:
+            continue
+        character = entry.get("character") or None
+        credit_type = _credit_type_from_cast(character)
+        key = (tmdb_id, media_type, credit_type)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        title = entry.get("title") or entry.get("name") or ""
+        year = _year_from_entry(entry)
+        poster_path = entry.get("poster_path")
+        poster_url = TMDBClient.poster_url(poster_path, "w342") if poster_path else None
+
+        if media_type == "movie":
+            item_id = movie_tmdb_to_item_id.get(tmdb_id)
+            in_lib = item_id is not None
+            is_watched = tmdb_id in watched_movie_tmdb_ids
+            movies.append(FilmographyItemOut(
+                tmdb_id=tmdb_id, media_type="movie", title=title, year=year,
+                poster_url=poster_url, character=character, credit_type=credit_type,
+                item_id=item_id, in_library=in_lib, watched=is_watched,
+            ))
+        else:
+            show_id = show_tmdb_to_id.get(tmdb_id)
+            in_lib = show_id is not None
+            w_eps = watched_eps_by_show.get(show_id, 0) if show_id else None
+            t_eps = total_eps_by_show.get(show_id, 0) if show_id else None
+            is_watched = (w_eps or 0) > 0
+            tv_shows.append(FilmographyItemOut(
+                tmdb_id=tmdb_id, media_type="tv", title=title, year=year,
+                poster_url=poster_url, character=character, credit_type=credit_type,
+                show_id=show_id, in_library=in_lib, watched=is_watched,
+                watched_episodes=w_eps, total_episodes=t_eps,
+            ))
+
+    # Process crew entries (credit_type = "production")
+    for entry in credits_data.get("crew", []):
+        media_type = entry.get("media_type")
+        if media_type not in ("movie", "tv"):
+            continue
+        tmdb_id = entry.get("id")
+        if not tmdb_id:
+            continue
+        genre_ids = set(entry.get("genre_ids") or [])
+        if genre_ids & _EXCLUDED_GENRES:
+            continue
+        job = entry.get("job") or None
+        credit_type = "production"
+        key = (tmdb_id, media_type, credit_type)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        title = entry.get("title") or entry.get("name") or ""
+        year = _year_from_entry(entry)
+        poster_path = entry.get("poster_path")
+        poster_url = TMDBClient.poster_url(poster_path, "w342") if poster_path else None
+
+        if media_type == "movie":
+            item_id = movie_tmdb_to_item_id.get(tmdb_id)
+            in_lib = item_id is not None
+            is_watched = tmdb_id in watched_movie_tmdb_ids
+            movies.append(FilmographyItemOut(
+                tmdb_id=tmdb_id, media_type="movie", title=title, year=year,
+                poster_url=poster_url, job=job, credit_type=credit_type,
+                item_id=item_id, in_library=in_lib, watched=is_watched,
+            ))
+        else:
+            show_id = show_tmdb_to_id.get(tmdb_id)
+            in_lib = show_id is not None
+            w_eps = watched_eps_by_show.get(show_id, 0) if show_id else None
+            t_eps = total_eps_by_show.get(show_id, 0) if show_id else None
+            is_watched = (w_eps or 0) > 0
+            tv_shows.append(FilmographyItemOut(
+                tmdb_id=tmdb_id, media_type="tv", title=title, year=year,
+                poster_url=poster_url, job=job, credit_type=credit_type,
+                show_id=show_id, in_library=in_lib, watched=is_watched,
+                watched_episodes=w_eps, total_episodes=t_eps,
+            ))
+
+    # Sort each list by year desc (None years sort last)
+    movies.sort(key=lambda x: x.year or 0, reverse=True)
+    tv_shows.sort(key=lambda x: x.year or 0, reverse=True)
+
+    return ActorFilmographyOut(movies=movies, tv_shows=tv_shows)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/actors/{tmdb_person_id}/recently-played
+# ---------------------------------------------------------------------------
+@router.get(
+    "/actors/{tmdb_person_id}/recently-played",
+    response_model=list[ActorRecentSessionOut],
+)
+def get_actor_recent_sessions(
+    tmdb_person_id: int,
+    db: Session = Depends(get_db),
+) -> list[ActorRecentSessionOut]:
+    """Watch sessions for movies and episodes featuring the actor.
+
+    Movies: actor appears via item_cast.media_item_id.
+    Episodes: actor appears via item_cast.show_id (show-level cast lookup).
+    Sessions are ordered by completed_at DESC, limited to 20, deduplicated by session_id.
+    """
+    results: dict[int, ActorRecentSessionOut] = {}
+
+    # --- Movie sessions ---
+    movie_rows = (
+        db.query(WatchSession, MediaItem)
+        .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+        .join(ItemCast, ItemCast.media_item_id == MediaItem.id)
+        .filter(
+            ItemCast.person_id == tmdb_person_id,
+            MediaItem.media_type == MediaType.movie,
+            WatchSession.status == SessionStatus.completed,
+        )
+        .order_by(WatchSession.completed_at.desc())
+        .all()
+    )
+    for session, item in movie_rows:
+        if session.id in results:
+            continue
+        # Poster
+        poster_art = (
+            db.query(Artwork)
+            .filter(
+                Artwork.media_item_id == item.id,
+                Artwork.art_type == "poster",
+                Artwork.local_path.isnot(None),
+            )
+            .first()
+        )
+        results[session.id] = ActorRecentSessionOut(
+            session_id=session.id,
+            media_type="movie",
+            title=item.title,
+            completed_at=session.completed_at,
+            item_id=item.id,
+            poster_url=f"/art/{poster_art.local_path}" if poster_art else None,
+        )
+
+    # --- Episode sessions (via show-level item_cast) ---
+    episode_rows = (
+        db.query(WatchSession, MediaItem, KodiShow)
+        .join(MediaItem, WatchSession.media_item_id == MediaItem.id)
+        .join(KodiShow, KodiShow.id == MediaItem.show_id)
+        .join(ItemCast, ItemCast.show_id == KodiShow.id)
+        .filter(
+            ItemCast.person_id == tmdb_person_id,
+            MediaItem.media_type == MediaType.episode,
+            WatchSession.status == SessionStatus.completed,
+        )
+        .order_by(WatchSession.completed_at.desc())
+        .all()
+    )
+    # Build a poster lookup for shows (avoid per-row queries)
+    show_poster_cache: dict[int, str | None] = {}
+
+    def _show_poster(show_id: int) -> str | None:
+        if show_id in show_poster_cache:
+            return show_poster_cache[show_id]
+        art = (
+            db.query(Artwork)
+            .join(MediaItem, Artwork.media_item_id == MediaItem.id)
+            .filter(
+                MediaItem.show_id == show_id,
+                Artwork.art_type == "tvshow.poster",
+                Artwork.local_path.isnot(None),
+            )
+            .first()
+        )
+        url = f"/art/{art.local_path}" if art else None
+        show_poster_cache[show_id] = url
+        return url
+
+    for session, item, show in episode_rows:
+        if session.id in results:
+            continue
+        results[session.id] = ActorRecentSessionOut(
+            session_id=session.id,
+            media_type="tv",
+            title=item.title,
+            show_title=show.title,
+            season_number=item.season,
+            episode_number=item.episode,
+            completed_at=session.completed_at,
+            item_id=item.id,
+            show_id=show.id,
+            poster_url=_show_poster(show.id),
+        )
+
+    # Sort all by completed_at DESC, limit 20
+    sorted_sessions = sorted(
+        results.values(),
+        key=lambda s: s.completed_at or datetime.min,
+        reverse=True,
+    )
+    return sorted_sessions[:20]
 
 
 # ---------------------------------------------------------------------------

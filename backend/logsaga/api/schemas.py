@@ -423,6 +423,10 @@ class ActorDetailOut(BaseModel):
     birthday: Optional[str] = None
     birthplace: Optional[str] = None
     profile_url: Optional[str] = None
+    # External IDs sourced from TMDB (None = not fetched or not available)
+    imdb_id: Optional[str] = None
+    instagram_id: Optional[str] = None
+    wikidata_id: Optional[str] = None
     watched_items: list[ActorAppearanceOut] = []
     library_items: list[ActorAppearanceOut] = []
 
@@ -537,19 +541,66 @@ class PostWatchedOut(BaseModel):
 # Actor TMDB recommendations
 # ---------------------------------------------------------------------------
 class TMDBDiscoveryItem(BaseModel):
-    """A TMDB movie or TV show surfaced as a recommendation (not in local library)."""
+    """A TMDB movie or TV show surfaced as a recommendation."""
     tmdb_id: int
     media_type: str          # "movie" or "tv"
     title: str
     poster_url: Optional[str] = None
     year: Optional[int] = None
     popularity: Optional[float] = None
+    in_library: bool = False   # exists in local Kodi/LogSAGA library
+    watched: bool = False      # has at least one completed watch session
 
 
 class ActorRecommendationsOut(BaseModel):
-    """TMDB credits for an actor filtered to items not in the local library."""
+    """TMDB credits for an actor (includes library items, marked with in_library/watched)."""
     most_popular: list[TMDBDiscoveryItem] = []
     most_recent: list[TMDBDiscoveryItem] = []
+
+
+# ---------------------------------------------------------------------------
+# Actor filmography (full TMDB combined_credits, split by movie/tv)
+# ---------------------------------------------------------------------------
+class FilmographyItemOut(BaseModel):
+    """One entry in an actor's full TMDB filmography."""
+    tmdb_id: int
+    media_type: str                    # "movie" or "tv"
+    title: str
+    year: Optional[int] = None
+    poster_url: Optional[str] = None
+    character: Optional[str] = None    # cast roles
+    job: Optional[str] = None          # crew roles
+    credit_type: str                   # "acting" | "self" | "production" | "unknown"
+    # Library presence
+    item_id: Optional[int] = None      # MediaItem.id if in local library (movie)
+    show_id: Optional[int] = None      # KodiShow.id if in local library (tv)
+    in_library: bool = False
+    watched: bool = False
+    watched_episodes: Optional[int] = None
+    total_episodes: Optional[int] = None
+
+
+class ActorFilmographyOut(BaseModel):
+    """Full TMDB filmography split into movies and TV shows."""
+    movies: list[FilmographyItemOut] = []
+    tv_shows: list[FilmographyItemOut] = []
+
+
+# ---------------------------------------------------------------------------
+# Actor recently played sessions
+# ---------------------------------------------------------------------------
+class ActorRecentSessionOut(BaseModel):
+    """One watch session for a movie or episode featuring the actor."""
+    session_id: int
+    media_type: str                        # "movie" or "tv"
+    title: str                             # movie title OR episode title
+    show_title: Optional[str] = None       # TV show name (episodes only)
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+    completed_at: Optional[UTCDatetime] = None
+    item_id: Optional[int] = None          # MediaItem.id for linking
+    show_id: Optional[int] = None          # KodiShow.id for linking
+    poster_url: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

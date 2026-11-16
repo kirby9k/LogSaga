@@ -444,6 +444,11 @@ class Person(Base):
     # Tracks 12-hour cooldown for background bio refreshes (separate from fetched_at success stamp)
     bio_refresh_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # External profile IDs sourced from TMDB /person/{id}?append_to_response=external_ids
+    imdb_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    instagram_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    wikidata_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
