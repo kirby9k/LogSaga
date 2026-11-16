@@ -25,7 +25,6 @@ from logsaga.api.schemas import (
     AdminSettingsOut,
     ArtworkOut,
     ArtworkStatusOut,
-    CastMemberOut,
     CastStatusOut,
     DailyStatOut,
     EpisodeSummaryOut,
@@ -69,7 +68,6 @@ from logsaga.models import (
     AppSetting,
     Artwork,
     ItemCast,
-    KodiObservation,
     KodiShow,
     KodiState,
     MediaItem,
@@ -82,6 +80,131 @@ from logsaga.models import (
 )
 
 router = APIRouter(tags=["api"])
+
+# How stale cast must be before triggering a background refresh
+_CAST_REFRESH_DAYS = 30
+# Minimum gap between consecutive refresh attempts for the same item (cooldown)
+_CAST_REFRESH_COOLDOWN_HOURS = 12
+
+
+# ---------------------------------------------------------------------------
+# Page-based cast / bio background refresh helpers
+# ---------------------------------------------------------------------------
+
+async def _refresh_cast_for_show_bg(app, show_id: int) -> None:
+    """Background: refresh TMDB cast for a show. Stamps cast_fetched_at on success."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    from logsaga.api.cast import populate_cast_for_show
+    from logsaga.models import KodiShow as _KodiShow
+    from logsaga.tmdb.client import TMDBClient
+
+    cfg = app.state.settings
+    if not cfg.tmdb_api_key:
+        return
+    engine = app.state.engine
+    SessionLocal = _sm(bind=engine, autoflush=False)
+    now = _dt.utcnow()
+    try:
+        with SessionLocal() as db:
+            show = db.get(_KodiShow, show_id)
+            if show is None or not show.tmdb_id:
+                return
+            tmdb = TMDBClient(cfg.tmdb_api_key, db)
+            await tmdb.tv_detail(int(show.tmdb_id))
+            populate_cast_for_show(show, db)
+            show.cast_fetched_at = now
+            db.commit()
+    except Exception as exc:
+        log.warning("page_cast_refresh_show_failed", extra={"show_id": show_id, "error": str(exc)})
+
+
+async def _refresh_cast_for_movie_bg(app, item_id: int) -> None:
+    """Background: refresh TMDB cast for a movie. Stamps cast_fetched_at on success."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    from logsaga.api.cast import populate_cast_for_item
+    from logsaga.tmdb.client import TMDBClient
+
+    cfg = app.state.settings
+    if not cfg.tmdb_api_key:
+        return
+    engine = app.state.engine
+    SessionLocal = _sm(bind=engine, autoflush=False)
+    now = _dt.utcnow()
+    try:
+        with SessionLocal() as db:
+            item = db.get(MediaItem, item_id)
+            if item is None or not item.tmdb_id:
+                return
+            tmdb = TMDBClient(cfg.tmdb_api_key, db)
+            await tmdb.movie_detail(int(item.tmdb_id))
+            populate_cast_for_item(item, db)
+            item.cast_fetched_at = now
+            db.commit()
+    except Exception as exc:
+        log.warning("page_cast_refresh_movie_failed", extra={"item_id": item_id, "error": str(exc)})
+
+
+async def _refresh_actor_bio_bg(app, tmdb_person_id: int) -> None:
+    """Background: refresh actor biography from TMDB. Stamps fetched_at on success."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy.orm import sessionmaker as _sm
+
+    from logsaga.tmdb.client import TMDBClient
+
+    cfg = app.state.settings
+    if not cfg.tmdb_api_key:
+        return
+    engine = app.state.engine
+    SessionLocal = _sm(bind=engine, autoflush=False)
+    now = _dt.utcnow()
+    try:
+        with SessionLocal() as db:
+            person = db.get(Person, tmdb_person_id)
+            if person is None:
+                return
+            tmdb = TMDBClient(cfg.tmdb_api_key, db)
+            bio_data = await tmdb.person_detail(tmdb_person_id)
+            person.biography = bio_data.get("biography") or None
+            person.birthday = bio_data.get("birthday") or None
+            person.birthplace = bio_data.get("place_of_birth") or None
+            person.fetched_at = now
+            db.commit()
+    except Exception as exc:
+        log.warning(
+            "page_bio_refresh_failed",
+            extra={"tmdb_person_id": tmdb_person_id, "error": str(exc)},
+        )
+
+
+def _should_refresh_cast(
+    fetched_at: Optional[datetime],
+    attempted_at: Optional[datetime],
+    now: datetime,
+) -> bool:
+    """Return True when a background cast refresh should be triggered.
+
+    Conditions:
+      - cast_fetched_at is NULL (never populated) or older than 30 days (stale)
+      - cast_refresh_attempted_at is NULL or older than 12 hours (not in cooldown)
+    """
+    stale = (
+        fetched_at is None
+        or (now - fetched_at).total_seconds() > _CAST_REFRESH_DAYS * 86400
+    )
+    if not stale:
+        return False
+    on_cooldown = (
+        attempted_at is not None
+        and (now - attempted_at).total_seconds() < _CAST_REFRESH_COOLDOWN_HOURS * 3600
+    )
+    return not on_cooldown
 
 
 # ---------------------------------------------------------------------------
@@ -560,8 +683,9 @@ def get_shows(
 # GET /shows/{show_id}  (L-08)
 # ---------------------------------------------------------------------------
 @router.get("/shows/{show_id}", response_model=ShowDetailOut)
-def get_show(
+async def get_show(
     show_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> ShowDetailOut:
     """Full show detail: metadata, all seasons, and all episodes (watched + unwatched)."""
@@ -692,6 +816,13 @@ def get_show(
 
     from logsaga.api.cast import populate_cast_for_show
     cast = populate_cast_for_show(show, db)
+
+    # Trigger a background cast refresh if data is stale and not in cooldown
+    now = datetime.utcnow()
+    if _should_refresh_cast(show.cast_fetched_at, show.cast_refresh_attempted_at, now):
+        show.cast_refresh_attempted_at = now
+        db.commit()
+        asyncio.create_task(_refresh_cast_for_show_bg(request.app, show_id))
 
     return ShowDetailOut(
         show_id=show.id,
@@ -864,8 +995,9 @@ def get_recently_added(
 # GET /items/{id}
 # ---------------------------------------------------------------------------
 @router.get("/items/{item_id}", response_model=MediaItemDetailOut)
-def get_item(
+async def get_item(
     item_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> MediaItemDetailOut:
     """Full item detail: metadata, artwork, all sessions, all observations."""
@@ -887,6 +1019,16 @@ def get_item(
 
     from logsaga.api.cast import populate_cast_for_item
     cast = populate_cast_for_item(item, db)
+
+    # Trigger background cast refresh for movies if data is stale and not on cooldown.
+    # Episodes use show-level cast; refresh is triggered from the show detail endpoint.
+    now = datetime.utcnow()
+    if item.media_type == "movie" and _should_refresh_cast(
+        item.cast_fetched_at, item.cast_refresh_attempted_at, now
+    ):
+        item.cast_refresh_attempted_at = now
+        db.commit()
+        asyncio.create_task(_refresh_cast_for_movie_bg(request.app, item_id))
 
     return MediaItemDetailOut(
         id=item.id,
@@ -1540,7 +1682,8 @@ async def _do_poll(engine, cfg: Settings) -> str:
         conn = connect(cfg, db_name=db_name)
         try:
             with _sm(bind=engine)() as db:
-                obs = poll_once(conn, db, cfg) or []
+                result = poll_once(conn, db, cfg)
+                obs = result.observations
                 by_item: dict[int, list] = {}
                 for o in obs:
                     by_item.setdefault(o.media_item_id, []).append(o)
@@ -1603,7 +1746,7 @@ async def _do_fetch_artwork(engine, cfg: Settings) -> str:
             total_updated = 0
             for iid in item_ids:
                 with SessionLocal() as db:
-                    _, updated = fetch_all_artwork(conn, rpc, db, cfg, item_id=iid)
+                    _, updated = fetch_all_artwork(conn, rpc, db, cfg, item_id=iid, force=True)
                     db.commit()
                     total_updated += updated
             return f"{len(item_ids)} items, {total_updated} artwork rows updated"
@@ -2096,11 +2239,15 @@ async def post_watched(
     # Fire-and-forget artwork + cast for new TMDB-only items
     engine = request.app.state.engine
     def _schedule_enrich(item_id: int) -> None:
-        from logsaga.artwork.cache import fetch_tmdb_artwork_async
+        from datetime import datetime as _dt
+
         from logsaga.api.cast import populate_cast_for_item, populate_cast_for_show
+        from logsaga.artwork.cache import fetch_tmdb_artwork_async
         from logsaga.models import KodiShow as _KodiShow
         from sqlalchemy.orm import sessionmaker as _sm
+
         async def _run():
+            now = _dt.utcnow()
             with _sm(bind=engine)() as enrich_db:
                 art_item = enrich_db.get(MediaItem, item_id)
                 if art_item is None:
@@ -2109,12 +2256,18 @@ async def post_watched(
                 if art_item.kodi_media_id is None:
                     await fetch_tmdb_artwork_async(art_item, enrich_db, cfg)
                 # Cast — TMDB detail is already cached by create_manual_sessions
+                art_item.cast_refresh_attempted_at = now
                 if art_item.media_type == "movie":
                     populate_cast_for_item(art_item, enrich_db)
+                    art_item.cast_fetched_at = now
                 elif art_item.media_type == "episode" and art_item.show_id:
                     show = enrich_db.get(_KodiShow, art_item.show_id)
                     if show:
                         populate_cast_for_show(show, enrich_db)
+                        show.cast_fetched_at = now
+                        show.cast_refresh_attempted_at = now
+                enrich_db.commit()
+
         asyncio.create_task(_run())
 
     return await create_manual_sessions(
@@ -2131,6 +2284,7 @@ async def post_watched(
 @router.get("/actors/{tmdb_person_id}", response_model=ActorDetailOut)
 async def get_actor(
     tmdb_person_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     tmdb: Optional["TMDBClient"] = Depends(get_tmdb_client_optional),  # type: ignore[name-defined]
 ) -> ActorDetailOut:
@@ -2138,22 +2292,45 @@ async def get_actor(
 
     The person must already be in the local DB (populated lazily when any
     item detail page is visited).  Returns 404 if the actor is unknown.
+
+    Bio refresh rules:
+    - First visit (fetched_at IS NULL): fetch bio now (blocking, one-time cost).
+    - Subsequent visits: re-fetch in background if bio is > 30 days old and the
+      last attempt was > 12 hours ago.  Stale bio is returned immediately.
     """
     person = db.get(Person, tmdb_person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Actor not found in local database")
 
-    # Lazily fetch biography from TMDB if not yet loaded
+    now = datetime.utcnow()
+
     if person.fetched_at is None and tmdb is not None:
+        # First visit: fetch bio synchronously so the page has content right away
         try:
             bio_data = await tmdb.person_detail(tmdb_person_id)
             person.biography = bio_data.get("biography") or None
             person.birthday = bio_data.get("birthday") or None
             person.birthplace = bio_data.get("place_of_birth") or None
-            person.fetched_at = datetime.utcnow()
+            person.fetched_at = now
+            person.bio_refresh_attempted_at = now
             db.commit()
         except Exception as exc:
             log.warning("Failed to fetch biography for person %d: %s", tmdb_person_id, exc)
+    else:
+        # Subsequent visits: check whether a background refresh is due
+        bio_stale = (
+            person.fetched_at is not None
+            and (now - person.fetched_at).total_seconds() > _CAST_REFRESH_DAYS * 86400
+        )
+        bio_on_cooldown = (
+            person.bio_refresh_attempted_at is not None
+            and (now - person.bio_refresh_attempted_at).total_seconds()
+            < _CAST_REFRESH_COOLDOWN_HOURS * 3600
+        )
+        if bio_stale and not bio_on_cooldown and tmdb is not None:
+            person.bio_refresh_attempted_at = now
+            db.commit()
+            asyncio.create_task(_refresh_actor_bio_bg(request.app, tmdb_person_id))
 
     watched_items = _build_actor_appearances(tmdb_person_id, db, watched_only=True)
     library_items = _build_actor_appearances(

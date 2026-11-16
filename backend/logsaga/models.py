@@ -129,6 +129,12 @@ class KodiShow(Base):
         Enum(KodiState), nullable=False, default=KodiState.unwatched
     )
 
+    # Cast refresh tracking
+    # cast_fetched_at: when cast was last successfully populated (NULL = never done)
+    # cast_refresh_attempted_at: last attempt timestamp, success or failure (12-hour cooldown)
+    cast_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cast_refresh_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -200,6 +206,10 @@ class MediaItem(Base):
 
     # Hash of scraped metadata fields — used to detect when a re-scrape changes the data
     metadata_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # Cast refresh tracking (movies only; episodes use their parent kodi_show)
+    cast_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cast_refresh_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
@@ -389,6 +399,12 @@ class Artwork(Base):
     # Last fetch error message (None if last fetch succeeded)
     fetch_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Retry tracking — consecutive_failures resets on success or source URL change.
+    # retry_after: when to next attempt; NULL when never failed, source changed, or
+    # stopped after 3 failures (auto-retry disabled; manual trigger still works).
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_after: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -425,6 +441,8 @@ class Person(Base):
     birthday: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # YYYY-MM-DD
     birthplace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Tracks 12-hour cooldown for background bio refreshes (separate from fetched_at success stamp)
+    bio_refresh_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow

@@ -191,7 +191,8 @@ _SQL_CHEAP_CHECK = """
 SELECT MAX(f.lastPlayed)                             AS max_played,
        COUNT(CASE WHEN f.playCount > 0 THEN 1 END)  AS played_count,
        COUNT(b.idBookmark)                           AS bookmark_count,
-       MAX(b.timeInSeconds)                          AS max_resume
+       MAX(b.timeInSeconds)                          AS max_resume,
+       COUNT(f.idFile)                               AS file_count
 FROM files f
 LEFT JOIN bookmark b ON b.idFile = f.idFile AND b.type = 1
 """
@@ -379,6 +380,7 @@ class CheapCheck:
     played_count: int
     bookmark_count: int
     max_resume: Optional[float]
+    file_count: int
 
 
 @dataclass
@@ -549,6 +551,7 @@ def cheap_check(conn: pymysql.Connection) -> CheapCheck:
         played_count=int(row["played_count"] or 0),
         bookmark_count=int(row["bookmark_count"] or 0),
         max_resume=row["max_resume"],
+        file_count=int(row["file_count"] or 0),
     )
 
 

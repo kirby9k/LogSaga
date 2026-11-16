@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import pymysql
 from sqlalchemy.orm import Session
@@ -41,6 +41,18 @@ from logsaga.models import (
     ObservationKind,
     SyncState,
 )
+
+
+# ---------------------------------------------------------------------------
+# PollResult — returned by poll_once to report what changed
+# ---------------------------------------------------------------------------
+class PollResult(NamedTuple):
+    observations: list[KodiObservation]
+    # True when files.idFile count changed (library addition or removal detected)
+    file_count_changed: bool
+    # IDs of items that received a lastplayed_changed or resume_set observation
+    # (may include new items; caller should union with new_item_ids as needed)
+    played_item_ids: list[int]
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +292,7 @@ def poll_once(
     conn: pymysql.Connection,
     db: Session,
     settings: Settings,
-) -> list[KodiObservation]:
+) -> PollResult:
     """
     Run one poll cycle:
       1. Cheap check — skip full snapshot if nothing changed.
@@ -291,7 +303,11 @@ def poll_once(
       6. Update kodi_file_state snapshot.
       7. Update sync_state.
 
-    Returns the list of KodiObservation rows written.
+    Returns a PollResult with:
+      observations      — KodiObservation rows written this cycle
+      file_count_changed — True when files.idFile count changed (library addition/removal)
+      played_item_ids    — item IDs that received lastplayed_changed or resume_set obs
+
     All writes happen in one SQLite transaction (committed on return).
     """
     observed_at = _now_utc()
@@ -302,17 +318,27 @@ def poll_once(
     except Exception:
         current_cheap = None
 
+    # Determine whether the library file count changed (triggers immediate library sync)
+    file_count_changed = False
+    if (
+        current_cheap is not None
+        and _poll_state.last_cheap is not None
+        and current_cheap.file_count != _poll_state.last_cheap.file_count
+    ):
+        file_count_changed = True
+
     if current_cheap is not None and _poll_state.last_cheap is not None:
         if (
             current_cheap.max_played == _poll_state.last_cheap.max_played
             and current_cheap.played_count == _poll_state.last_cheap.played_count
             and current_cheap.bookmark_count == _poll_state.last_cheap.bookmark_count
             and current_cheap.max_resume == _poll_state.last_cheap.max_resume
+            and not file_count_changed
         ):
             # Nothing changed — update poll time and return
             _update_sync_state(db, observed_at, success=True, observations=0)
             db.commit()
-            return []
+            return PollResult(observations=[], file_count_changed=False, played_item_ids=[])
 
     _poll_state.last_cheap = current_cheap
 
@@ -329,6 +355,9 @@ def poll_once(
     all_ids = set(old_states.keys()) | set(new_snapshot.keys())
 
     new_observations: list[KodiObservation] = []
+    # Track items that have active playback observations for priority enrichment
+    _played_kinds = {ObservationKind.lastplayed_changed, ObservationKind.resume_set}
+    played_item_ids: list[int] = []
 
     for file_id in all_ids:
         old = old_states.get(file_id)
@@ -352,6 +381,10 @@ def poll_once(
             item.kodi_state = KodiState.removed
             item.updated_at = _now_utc()
 
+        # Track items with active play observations for priority enrichment
+        if _played_kinds & set(kinds):
+            played_item_ids.append(item.id)
+
         # Step 5: write observations
         for kind in kinds:
             obs = KodiObservation(
@@ -374,7 +407,11 @@ def poll_once(
     _update_sync_state(db, observed_at, success=True, observations=len(new_observations))
 
     db.commit()
-    return new_observations
+    return PollResult(
+        observations=new_observations,
+        file_count_changed=file_count_changed,
+        played_item_ids=played_item_ids,
+    )
 
 
 def _upsert_file_state(

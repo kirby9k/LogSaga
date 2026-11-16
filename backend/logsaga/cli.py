@@ -444,7 +444,8 @@ def sync_once(
     _, SessionLocal = _get_db_session(db_path)
 
     with SessionLocal() as db:
-        observations = poll_once(kodi_conn, db, cfg)
+        poll_result = poll_once(kodi_conn, db, cfg)
+        observations = poll_result.observations
 
         if not observations:
             typer.echo("No changes detected.")
@@ -678,6 +679,7 @@ async def _bulk_fetch_async(
     rpc,
     cfg,
     concurrency: int,
+    force: bool = False,
 ) -> int:
     """
     Download artwork for all items using async HTTP with bounded concurrency.
@@ -715,7 +717,7 @@ async def _bulk_fetch_async(
                         return 0
                     try:
                         count = await fetch_artwork_for_item_async(
-                            item, kodi_conn, rpc, db, cfg, client
+                            item, kodi_conn, rpc, db, cfg, client, force=force
                         )
                         db.commit()
                         return count
@@ -884,7 +886,7 @@ def fetch_artwork(
             # Single item — one transaction is fine
             with SessionLocal() as db:
                 items_processed, artwork_updated = fetch_all_artwork(
-                    kodi_conn, rpc, db, cfg, item_id=item_id
+                    kodi_conn, rpc, db, cfg, item_id=item_id, force=True
                 )
                 db.commit()
             typer.echo(f"Items processed: {items_processed}")
@@ -912,7 +914,7 @@ def fetch_artwork(
             )
 
             total_updated = asyncio.run(
-                _bulk_fetch_async(item_ids, engine, kodi_conn, rpc, cfg, concurrency)
+                _bulk_fetch_async(item_ids, engine, kodi_conn, rpc, cfg, concurrency, force=True)
             )
             typer.echo(f"\nDone. {total_items} items processed, {total_updated} artwork rows updated.")
     finally:

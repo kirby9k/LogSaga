@@ -119,6 +119,11 @@ def _make_thumbnail(data: bytes, dest_path: Path, max_px: int) -> Optional[Path]
         return None
 
 
+# Retry backoff schedule: list of hours to wait after each consecutive failure.
+# After all entries are exhausted (>= 3 failures) auto-retry stops.
+_RETRY_BACKOFF_HOURS = [1, 24, 72]
+
+
 def _upsert_artwork(
     db: Session,
     media_item_id: int,
@@ -129,7 +134,15 @@ def _upsert_artwork(
     file_size: Optional[int],
     fetch_error: Optional[str],
 ) -> Artwork:
-    """Insert or update an Artwork row for (media_item_id, art_type)."""
+    """Insert or update an Artwork row for (media_item_id, art_type).
+
+    On success: resets consecutive_failures to 0 and clears retry_after.
+    On failure: increments consecutive_failures and sets retry_after according
+    to the backoff schedule (1 h → 24 h → 72 h → auto-retry stopped).
+    If the source URL changed, the failure counter resets before incrementing.
+    """
+    from datetime import timedelta
+
     row = (
         db.query(Artwork)
         .filter_by(media_item_id=media_item_id, art_type=art_type)
@@ -140,10 +153,16 @@ def _upsert_artwork(
         row = Artwork(
             media_item_id=media_item_id,
             art_type=art_type,
+            consecutive_failures=0,
             created_at=now,
             updated_at=now,
         )
         db.add(row)
+
+    # Reset failure counter when the source URL changes (new URL = fresh budget)
+    if row.source_url is not None and row.source_url != source_url:
+        row.consecutive_failures = 0
+        row.retry_after = None
 
     row.source_url = source_url
     row.local_path = local_path
@@ -151,8 +170,21 @@ def _upsert_artwork(
     row.file_size = file_size
     row.fetch_error = fetch_error
     row.updated_at = now
+
     if fetch_error is None and local_path is not None:
+        # Success: stamp fetch time and clear failure state
         row.fetched_at = now
+        row.consecutive_failures = 0
+        row.retry_after = None
+    elif fetch_error is not None:
+        # Failure: advance the backoff counter
+        row.consecutive_failures = (row.consecutive_failures or 0) + 1
+        idx = row.consecutive_failures - 1  # 0-based index into schedule
+        if idx < len(_RETRY_BACKOFF_HOURS):
+            row.retry_after = now + timedelta(hours=_RETRY_BACKOFF_HOURS[idx])
+        else:
+            # Exhausted schedule — stop auto-retry (manual trigger still works)
+            row.retry_after = None
 
     return row
 
@@ -166,12 +198,19 @@ def fetch_artwork_for_item(
     rpc: Optional[KodiJSONRPC],
     db: Session,
     cfg: Settings,
+    force: bool = False,
 ) -> int:
     """
     Fetch and cache artwork for one media item.
 
     Returns the number of Artwork rows created or updated.
     Skips art already on disk with an unchanged source URL.
+
+    When force=False (default), art types that have exhausted their automatic
+    retry budget (consecutive_failures >= 3 and retry_after IS NULL) or are
+    within a backoff window (retry_after > now) are skipped.  Pass force=True
+    to bypass both checks (used by the CLI fetch-artwork command and the
+    settings UI manual trigger).
 
     Show-level art (tvshow.*, season.poster) is stored once per show (or per
     season) in shows/<show_name>/ so that all episodes share one file on disk.
@@ -207,6 +246,17 @@ def fetch_artwork_for_item(
             and (artwork_dir / existing.local_path).exists()
         ):
             continue
+
+        # Respect retry backoff unless this is a forced run
+        if not force and existing is not None:
+            now_check = _now_utc()
+            failures = existing.consecutive_failures or 0
+            if existing.retry_after is None and failures >= len(_RETRY_BACKOFF_HOURS):
+                # Auto-retry budget exhausted; skip until manually forced
+                continue
+            if existing.retry_after is not None and existing.retry_after > now_check:
+                # Still within the backoff window
+                continue
 
         # Determine whether this is show-level art that belongs in shows/<show_name>/
         is_show_art = (
@@ -349,6 +399,7 @@ async def fetch_artwork_for_item_async(
     db: Session,
     cfg: Settings,
     client: httpx.AsyncClient,
+    force: bool = False,
 ) -> int:
     """
     Async version of fetch_artwork_for_item.
@@ -356,6 +407,8 @@ async def fetch_artwork_for_item_async(
     Identical logic but uses ``await client.get()`` for downloads so that
     multiple items can have HTTP requests in-flight simultaneously.
     Pass a shared ``httpx.AsyncClient`` (with timeout already set) from the caller.
+
+    force=True bypasses retry backoff (used by CLI/manual triggers).
     """
     if item.kodi_media_id is None:
         return 0
@@ -384,6 +437,15 @@ async def fetch_artwork_for_item_async(
             and (artwork_dir / existing.local_path).exists()
         ):
             continue
+
+        # Respect retry backoff unless this is a forced run
+        if not force and existing is not None:
+            now_check = _now_utc()
+            failures = existing.consecutive_failures or 0
+            if existing.retry_after is None and failures >= len(_RETRY_BACKOFF_HOURS):
+                continue
+            if existing.retry_after is not None and existing.retry_after > now_check:
+                continue
 
         is_show_art = (
             (
@@ -623,9 +685,13 @@ def fetch_all_artwork(
     db: Session,
     cfg: Settings,
     item_id: Optional[int] = None,
+    force: bool = False,
 ) -> tuple[int, int]:
     """
     Fetch artwork for all items (or one item if item_id is given).
+
+    force=True bypasses retry backoff — use for CLI/manual triggers so that
+    items that stopped auto-retrying get a fresh attempt.
 
     Returns (items_processed, artwork_updated).
     """
@@ -644,7 +710,7 @@ def fetch_all_artwork(
     total_updated = 0
     for item in items:
         try:
-            count = fetch_artwork_for_item(item, kodi_conn, rpc, db, cfg)
+            count = fetch_artwork_for_item(item, kodi_conn, rpc, db, cfg, force=force)
             total_updated += count
         except Exception as exc:
             logger.error("Error fetching art for item %d (%s): %s", item.id, item.title, exc)
