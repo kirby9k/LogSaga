@@ -763,9 +763,12 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
     from logsaga.tmdb.client import TMDBClient
 
     SessionLocal = _sm(bind=engine, autoflush=False)
-    stale_cutoff = _now_utc() - timedelta(days=30)
+    now = _now_utc()
+    stale_cutoff = now - timedelta(days=30)
+    cooldown_cutoff = now - timedelta(hours=12)
 
-    # Collect shows and movies that need cast (never populated OR older than 30 days)
+    # Collect shows and movies that need cast (never populated OR older than 30 days),
+    # excluding items attempted in the last 12 hours (failed IDs don't spam every sync).
     with SessionLocal() as db:
         show_ids = [
             r[0]
@@ -775,6 +778,10 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
                 (
                     _KodiShow.cast_fetched_at.is_(None)
                     | (_KodiShow.cast_fetched_at < stale_cutoff)
+                ),
+                (
+                    _KodiShow.cast_refresh_attempted_at.is_(None)
+                    | (_KodiShow.cast_refresh_attempted_at < cooldown_cutoff)
                 ),
             )
             .all()
@@ -790,6 +797,10 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
                     MediaItem.cast_fetched_at.is_(None)
                     | (MediaItem.cast_fetched_at < stale_cutoff)
                 ),
+                (
+                    MediaItem.cast_refresh_attempted_at.is_(None)
+                    | (MediaItem.cast_refresh_attempted_at < cooldown_cutoff)
+                ),
             )
             .all()
         ]
@@ -803,6 +814,8 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
     sem = asyncio.Semaphore(3)
 
     async def _enrich_show(show_id: int) -> bool:
+        import httpx as _httpx
+        from logsaga.tmdb.matching import pick_tv_match
         async with sem:
             now = _now_utc()
             try:
@@ -818,7 +831,33 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
                     if show is None:
                         return False
                     tmdb = TMDBClient(cfg.tmdb_api_key, db)
-                    await tmdb.tv_detail(int(show.tmdb_id))
+                    try:
+                        await tmdb.tv_detail(int(show.tmdb_id))
+                    except _httpx.HTTPStatusError as http_exc:
+                        if http_exc.response.status_code != 404:
+                            raise
+                        # Bad tmdb_id — search by title+year for the correct one
+                        data = await tmdb.search_tv(show.title, show.year)
+                        new_id = pick_tv_match(data.get("results", []), show.title, show.year)
+                        if new_id:
+                            logger.info(
+                                "cast_sync_id_corrected",
+                                entity="show", show_id=show_id,
+                                old_tmdb_id=show.tmdb_id, new_tmdb_id=new_id,
+                                title=show.title,
+                            )
+                            show.tmdb_id = str(new_id)
+                            db.commit()
+                            await tmdb.tv_detail(new_id)  # fetch with correct ID
+                        else:
+                            logger.warning(
+                                "cast_sync_id_cleared",
+                                entity="show", show_id=show_id,
+                                bad_tmdb_id=show.tmdb_id, title=show.title,
+                            )
+                            show.tmdb_id = None
+                            db.commit()
+                            return False
                     populate_cast_for_show(show, db)
                     # Only stamp success after populate committed inside populate_cast_for_show
                     show.cast_fetched_at = now
@@ -829,6 +868,8 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
                 return False
 
     async def _enrich_movie(item_id: int) -> bool:
+        import httpx as _httpx
+        from logsaga.tmdb.matching import pick_movie_match
         async with sem:
             now = _now_utc()
             try:
@@ -843,7 +884,33 @@ async def _run_cast_sync_bg(app: FastAPI) -> None:
                     if item is None:
                         return False
                     tmdb = TMDBClient(cfg.tmdb_api_key, db)
-                    await tmdb.movie_detail(int(item.tmdb_id))
+                    try:
+                        await tmdb.movie_detail(int(item.tmdb_id))
+                    except _httpx.HTTPStatusError as http_exc:
+                        if http_exc.response.status_code != 404:
+                            raise
+                        # Bad tmdb_id — search by title+year for the correct one
+                        data = await tmdb.search_movie(item.title, item.year)
+                        new_id = pick_movie_match(data.get("results", []), item.title, item.year)
+                        if new_id:
+                            logger.info(
+                                "cast_sync_id_corrected",
+                                entity="movie", item_id=item_id,
+                                old_tmdb_id=item.tmdb_id, new_tmdb_id=new_id,
+                                title=item.title,
+                            )
+                            item.tmdb_id = str(new_id)
+                            db.commit()
+                            await tmdb.movie_detail(new_id)  # fetch with correct ID
+                        else:
+                            logger.warning(
+                                "cast_sync_id_cleared",
+                                entity="movie", item_id=item_id,
+                                bad_tmdb_id=item.tmdb_id, title=item.title,
+                            )
+                            item.tmdb_id = None
+                            db.commit()
+                            return False
                     populate_cast_for_item(item, db)
                     item.cast_fetched_at = now
                     db.commit()

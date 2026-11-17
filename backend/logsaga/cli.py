@@ -16,9 +16,7 @@ Commands:
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
-import unicodedata
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -1248,45 +1246,8 @@ def enrich_episode_cast(
 # enrich-tmdb-ids helpers
 # ---------------------------------------------------------------------------
 
-def _normalize_title(title: str) -> str:
-    """Lowercase ASCII, replace punctuation with spaces, collapse whitespace."""
-    title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
-    title = re.sub(r"[^\w\s]", " ", title.lower())
-    return re.sub(r"\s+", " ", title).strip()
-
-
-def _pick_movie_match(results: list[dict], local_title: str, local_year: int | None) -> int | None:
-    """Return the TMDB ID of the first result that matches title and year, or None."""
-    local_norm = _normalize_title(local_title)
-    for r in results[:5]:
-        tmdb_norm = _normalize_title(r.get("title", ""))
-        tmdb_orig_norm = _normalize_title(r.get("original_title", ""))
-        if local_norm not in (tmdb_norm, tmdb_orig_norm):
-            continue
-        if local_year:
-            rd = r.get("release_date", "")
-            tmdb_year = int(rd[:4]) if rd and len(rd) >= 4 else None
-            if tmdb_year and abs(tmdb_year - local_year) > 1:
-                continue
-        return r.get("id")
-    return None
-
-
-def _pick_tv_match(results: list[dict], local_title: str, local_year: int | None) -> int | None:
-    """Return the TMDB ID of the first TV result that matches title and year, or None."""
-    local_norm = _normalize_title(local_title)
-    for r in results[:5]:
-        tmdb_norm = _normalize_title(r.get("name", ""))
-        tmdb_orig_norm = _normalize_title(r.get("original_name", ""))
-        if local_norm not in (tmdb_norm, tmdb_orig_norm):
-            continue
-        if local_year:
-            fad = r.get("first_air_date", "")
-            tmdb_year = int(fad[:4]) if fad and len(fad) >= 4 else None
-            if tmdb_year and abs(tmdb_year - local_year) > 1:
-                continue
-        return r.get("id")
-    return None
+from logsaga.tmdb.matching import pick_movie_match as _pick_movie_match
+from logsaga.tmdb.matching import pick_tv_match as _pick_tv_match
 
 
 _ENRICH_TMDB_IDS_BATCH_SIZE = 50
