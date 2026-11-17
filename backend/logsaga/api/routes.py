@@ -705,6 +705,13 @@ def get_shows(
             poster_url=poster_url,
             thumbnail_url=thumb_url,
             next_unwatched=next_unwatched,
+            rating_imdb=show.rating_imdb,
+            votes_imdb=show.votes_imdb,
+            rating_tmdb=show.rating_tmdb,
+            votes_tmdb=show.votes_tmdb,
+            rating_trakt=show.rating_trakt,
+            votes_trakt=show.votes_trakt,
+            userrating=show.userrating,
         ))
     return result
 
@@ -872,6 +879,13 @@ async def get_show(
         poster_url=poster_url,
         fanart_url=fanart_url,
         logo_url=logo_url,
+        rating_imdb=show.rating_imdb,
+        votes_imdb=show.votes_imdb,
+        rating_tmdb=show.rating_tmdb,
+        votes_tmdb=show.votes_tmdb,
+        rating_trakt=show.rating_trakt,
+        votes_trakt=show.votes_trakt,
+        userrating=show.userrating,
         seasons=seasons_out,
         cast=cast,
     )
@@ -1084,6 +1098,13 @@ async def get_item(
         audio_codec=item.audio_codec,
         audio_channels=item.audio_channels,
         kodi_state=item.kodi_state,
+        rating_imdb=item.rating_imdb,
+        votes_imdb=item.votes_imdb,
+        rating_tmdb=item.rating_tmdb,
+        votes_tmdb=item.votes_tmdb,
+        rating_trakt=item.rating_trakt,
+        votes_trakt=item.votes_trakt,
+        userrating=item.userrating,
         created_at=item.created_at,
         updated_at=item.updated_at,
         artwork=[ArtworkOut.model_validate(a) for a in item.artwork],
@@ -1451,6 +1472,13 @@ def get_movies(
             thumbnail_url=_poster_url(item, thumbnail=True),
             total_sessions=s.total if s else 0,
             last_watched_at=s.last_at if s else None,
+            rating_imdb=item.rating_imdb,
+            votes_imdb=item.votes_imdb,
+            rating_tmdb=item.rating_tmdb,
+            votes_tmdb=item.votes_tmdb,
+            rating_trakt=item.rating_trakt,
+            votes_trakt=item.votes_trakt,
+            userrating=item.userrating,
         ))
 
     return MovieListOut(total=total, items=result)

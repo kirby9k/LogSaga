@@ -114,6 +114,14 @@ class MediaItemDetailOut(_Base):
     audio_codec: Optional[str] = None
     audio_channels: Optional[int] = None
     kodi_state: str
+    # Ratings from Kodi's rating table + userrating column
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
     created_at: UTCDatetime
     updated_at: UTCDatetime
     artwork: list[ArtworkOut] = []
@@ -167,6 +175,14 @@ class ShowSummaryOut(BaseModel):
     poster_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
     next_unwatched: Optional[NextUnwatchedOut] = None
+    # Ratings from Kodi
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +228,14 @@ class ShowDetailOut(BaseModel):
     poster_url: Optional[str] = None
     fanart_url: Optional[str] = None
     logo_url: Optional[str] = None
+    # Ratings from Kodi
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
     seasons: list[SeasonSummaryOut] = []
     cast: list[CastMemberOut] = []          # top 20 cast members (lazy-populated)
 
@@ -287,6 +311,14 @@ class MovieSummaryOut(BaseModel):
     thumbnail_url: Optional[str] = None
     total_sessions: int
     last_watched_at: Optional[UTCDatetime] = None
+    # Ratings from Kodi
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
 
 
 class MovieListOut(BaseModel):

@@ -331,6 +331,13 @@ export interface components {
       audio_codec?: string | null;
       audio_channels?: number | null;
       kodi_state: string;
+      rating_imdb?: number | null;
+      votes_imdb?: number | null;
+      rating_tmdb?: number | null;
+      votes_tmdb?: number | null;
+      rating_trakt?: number | null;
+      votes_trakt?: number | null;
+      userrating?: number | null;
       created_at: string;
       updated_at: string;
       artwork: components["schemas"]["ArtworkOut"][];
@@ -373,6 +380,13 @@ export interface components {
       poster_url?: string | null;
       thumbnail_url?: string | null;
       next_unwatched?: components["schemas"]["NextUnwatchedOut"] | null;
+      rating_imdb?: number | null;
+      votes_imdb?: number | null;
+      rating_tmdb?: number | null;
+      votes_tmdb?: number | null;
+      rating_trakt?: number | null;
+      votes_trakt?: number | null;
+      userrating?: number | null;
     };
 
     EpisodeSummaryOut: {
@@ -414,6 +428,13 @@ export interface components {
       poster_url?: string | null;
       fanart_url?: string | null;
       logo_url?: string | null;
+      rating_imdb?: number | null;
+      votes_imdb?: number | null;
+      rating_tmdb?: number | null;
+      votes_tmdb?: number | null;
+      rating_trakt?: number | null;
+      votes_trakt?: number | null;
+      userrating?: number | null;
       seasons: components["schemas"]["SeasonSummaryOut"][];
       cast: components["schemas"]["CastMemberOut"][];
     };
@@ -480,6 +501,13 @@ export interface components {
       thumbnail_url?: string | null;
       total_sessions: number;
       last_watched_at?: string | null;
+      rating_imdb?: number | null;
+      votes_imdb?: number | null;
+      rating_tmdb?: number | null;
+      votes_tmdb?: number | null;
+      rating_trakt?: number | null;
+      votes_trakt?: number | null;
+      userrating?: number | null;
     };
 
     MovieListOut: {

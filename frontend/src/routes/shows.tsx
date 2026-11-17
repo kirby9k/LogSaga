@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/shared/PageHeader'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
+import { GridRating } from '@/components/shared/RatingBadges'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { formatEpisode } from '@/lib/format'
@@ -146,6 +147,7 @@ function ShowsPage() {
                     {show.watched_episodes}/{show.total_episodes} eps
                   </p>
                   <PercentBar percent={pct} className="mt-1" showLabel={false} />
+                  <GridRating item={show} />
                   {show.next_unwatched && (
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Next: {formatEpisode(show.next_unwatched.season, show.next_unwatched.episode)}

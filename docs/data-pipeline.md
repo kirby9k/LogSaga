@@ -89,6 +89,11 @@ After observations are written, `build_incremental()` runs for each affected ite
 - `date_added` (from Kodi's `files.dateAdded` — sentinel `1951-09-25` when NULL)
 - `kodi_state` (derived from `playCount`)
 - `tmdb_id`, `imdb_id`, `tvdb_id` (from Kodi's `uniqueid` table, movies only via LEFT JOIN)
+- **Ratings** — always overwritten (community scores change over time):
+  - `rating_imdb`, `votes_imdb` — from `rating` table, `rating_type = 'imdb'`
+  - `rating_tmdb`, `votes_tmdb` — COALESCE of `'themoviedb'` and `'tmdb'` rows
+  - `rating_trakt`, `votes_trakt` — from `rating_type = 'trakt'`
+  - `userrating` — from the `userrating` column on each media table (0–10 personal score)
 - Marks items no longer in Kodi as `kodi_state = removed`
 
 ### After sync: fire-and-forget tasks

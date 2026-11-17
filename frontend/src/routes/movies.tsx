@@ -7,6 +7,7 @@ import { ErrorState } from '@/components/shared/ErrorState'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { RuntimeDisplay } from '@/components/shared/RuntimeDisplay'
+import { GridRating } from '@/components/shared/RatingBadges'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -209,6 +210,7 @@ function MovieCard({ movie, showFormerBadge, onClick }: { movie: MovieSummaryOut
           <span>· <RuntimeDisplay seconds={movie.runtime_s} /></span>
         )}
       </div>
+      <GridRating item={movie} />
       {movie.last_watched_at && (
         <p className="text-xs text-muted-foreground mt-0.5">
           {formatRelative(movie.last_watched_at)}

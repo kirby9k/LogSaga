@@ -7,6 +7,7 @@ import { CastRow } from '@/components/shared/CastRow'
 import { MediaPoster } from '@/components/shared/MediaPoster'
 import { PercentBar } from '@/components/shared/PercentBar'
 import { KodiStateBadge } from '@/components/shared/KodiStateBadge'
+import { RatingsRow } from '@/components/shared/RatingBadges'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import {
@@ -129,6 +130,9 @@ function ShowDetailPage() {
             </div>
             <PercentBar percent={pct} showLabel={false} />
           </div>
+
+          {/* Ratings */}
+          <RatingsRow item={show} />
 
           {/* External IDs */}
           <div className="flex flex-wrap gap-2 mt-3">

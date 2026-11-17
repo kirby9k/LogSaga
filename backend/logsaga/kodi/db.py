@@ -224,25 +224,47 @@ SELECT 'movie'          AS media_type,
        m.premiered      AS release_date,
        m.c01            AS plot,
        m.c14            AS genres,
-       m.c15            AS director
+       m.c15            AS director,
+       m.userrating                             AS userrating,
+       r_imdb.rating                            AS rating_imdb,
+       r_imdb.votes                             AS votes_imdb,
+       COALESCE(r_tmdb1.rating, r_tmdb2.rating) AS rating_tmdb,
+       COALESCE(r_tmdb1.votes,  r_tmdb2.votes)  AS votes_tmdb,
+       r_trakt.rating                           AS rating_trakt,
+       r_trakt.votes                            AS votes_trakt
 FROM movie m
+LEFT JOIN rating r_imdb  ON r_imdb.media_id  = m.idMovie AND r_imdb.media_type  = 'movie' AND r_imdb.rating_type  = 'imdb'
+LEFT JOIN rating r_tmdb1 ON r_tmdb1.media_id = m.idMovie AND r_tmdb1.media_type = 'movie' AND r_tmdb1.rating_type = 'themoviedb'
+LEFT JOIN rating r_tmdb2 ON r_tmdb2.media_id = m.idMovie AND r_tmdb2.media_type = 'movie' AND r_tmdb2.rating_type = 'tmdb'
+LEFT JOIN rating r_trakt ON r_trakt.media_id = m.idMovie AND r_trakt.media_type = 'movie' AND r_trakt.rating_type = 'trakt'
 WHERE m.idFile = %s
 """
 
 _SQL_IDENTIFY_EPISODE = """
-SELECT 'episode'            AS media_type,
-       e.idEpisode          AS media_id,
-       e.c00                AS title,
-       s.c00                AS show_title,
+SELECT 'episode'             AS media_type,
+       e.idEpisode           AS media_id,
+       e.c00                 AS title,
+       s.c00                 AS show_title,
        CAST(e.c12 AS SIGNED) AS season,
        CAST(e.c13 AS SIGNED) AS episode,
-       NULL                 AS runtime_s,
-       e.c05                AS release_date,
-       e.c01                AS plot,
-       s.c08                AS genres,
-       NULL                 AS director
+       NULL                  AS runtime_s,
+       e.c05                 AS release_date,
+       e.c01                 AS plot,
+       s.c08                 AS genres,
+       NULL                  AS director,
+       e.userrating                             AS userrating,
+       r_imdb.rating                            AS rating_imdb,
+       r_imdb.votes                             AS votes_imdb,
+       COALESCE(r_tmdb1.rating, r_tmdb2.rating) AS rating_tmdb,
+       COALESCE(r_tmdb1.votes,  r_tmdb2.votes)  AS votes_tmdb,
+       r_trakt.rating                           AS rating_trakt,
+       r_trakt.votes                            AS votes_trakt
 FROM episode e
 JOIN tvshow s ON s.idShow = e.idShow
+LEFT JOIN rating r_imdb  ON r_imdb.media_id  = e.idEpisode AND r_imdb.media_type  = 'episode' AND r_imdb.rating_type  = 'imdb'
+LEFT JOIN rating r_tmdb1 ON r_tmdb1.media_id = e.idEpisode AND r_tmdb1.media_type = 'episode' AND r_tmdb1.rating_type = 'themoviedb'
+LEFT JOIN rating r_tmdb2 ON r_tmdb2.media_id = e.idEpisode AND r_tmdb2.media_type = 'episode' AND r_tmdb2.rating_type = 'tmdb'
+LEFT JOIN rating r_trakt ON r_trakt.media_id = e.idEpisode AND r_trakt.media_type = 'episode' AND r_trakt.rating_type = 'trakt'
 WHERE e.idFile = %s
 """
 
@@ -289,31 +311,53 @@ SELECT m.idMovie           AS media_id,
        f.dateAdded         AS date_added,
        f.playCount         AS play_count,
        f.lastPlayed        AS last_played,
-       uid_tmdb.value      AS tmdb_id
+       uid_tmdb.value      AS tmdb_id,
+       m.userrating                             AS userrating,
+       r_imdb.rating                            AS rating_imdb,
+       r_imdb.votes                             AS votes_imdb,
+       COALESCE(r_tmdb1.rating, r_tmdb2.rating) AS rating_tmdb,
+       COALESCE(r_tmdb1.votes,  r_tmdb2.votes)  AS votes_tmdb,
+       r_trakt.rating                           AS rating_trakt,
+       r_trakt.votes                            AS votes_trakt
 FROM movie m
 JOIN files f ON f.idFile = m.idFile
 LEFT JOIN uniqueid uid_tmdb ON uid_tmdb.media_id = m.idMovie
     AND uid_tmdb.media_type = 'movie'
     AND uid_tmdb.type = 'tmdb'
+LEFT JOIN rating r_imdb  ON r_imdb.media_id  = m.idMovie AND r_imdb.media_type  = 'movie' AND r_imdb.rating_type  = 'imdb'
+LEFT JOIN rating r_tmdb1 ON r_tmdb1.media_id = m.idMovie AND r_tmdb1.media_type = 'movie' AND r_tmdb1.rating_type = 'themoviedb'
+LEFT JOIN rating r_tmdb2 ON r_tmdb2.media_id = m.idMovie AND r_tmdb2.media_type = 'movie' AND r_tmdb2.rating_type = 'tmdb'
+LEFT JOIN rating r_trakt ON r_trakt.media_id = m.idMovie AND r_trakt.media_type = 'movie' AND r_trakt.rating_type = 'trakt'
 """
 
 _SQL_LIBRARY_EPISODES = """
-SELECT e.idEpisode          AS media_id,
-       e.idFile             AS file_id,
-       e.idShow             AS kodi_idShow,
-       e.c00                AS title,
-       s.c00                AS show_title,
+SELECT e.idEpisode           AS media_id,
+       e.idFile              AS file_id,
+       e.idShow              AS kodi_idShow,
+       e.c00                 AS title,
+       s.c00                 AS show_title,
        CAST(e.c12 AS SIGNED) AS season,
        CAST(e.c13 AS SIGNED) AS episode,
-       e.c05                AS release_date,
-       e.c01                AS plot,
-       s.c08                AS genres,
-       f.dateAdded          AS date_added,
-       f.playCount          AS play_count,
-       f.lastPlayed         AS last_played
+       e.c05                 AS release_date,
+       e.c01                 AS plot,
+       s.c08                 AS genres,
+       f.dateAdded           AS date_added,
+       f.playCount           AS play_count,
+       f.lastPlayed          AS last_played,
+       e.userrating                             AS userrating,
+       r_imdb.rating                            AS rating_imdb,
+       r_imdb.votes                             AS votes_imdb,
+       COALESCE(r_tmdb1.rating, r_tmdb2.rating) AS rating_tmdb,
+       COALESCE(r_tmdb1.votes,  r_tmdb2.votes)  AS votes_tmdb,
+       r_trakt.rating                           AS rating_trakt,
+       r_trakt.votes                            AS votes_trakt
 FROM episode e
 JOIN tvshow s ON s.idShow = e.idShow
 JOIN files f ON f.idFile = e.idFile
+LEFT JOIN rating r_imdb  ON r_imdb.media_id  = e.idEpisode AND r_imdb.media_type  = 'episode' AND r_imdb.rating_type  = 'imdb'
+LEFT JOIN rating r_tmdb1 ON r_tmdb1.media_id = e.idEpisode AND r_tmdb1.media_type = 'episode' AND r_tmdb1.rating_type = 'themoviedb'
+LEFT JOIN rating r_tmdb2 ON r_tmdb2.media_id = e.idEpisode AND r_tmdb2.media_type = 'episode' AND r_tmdb2.rating_type = 'tmdb'
+LEFT JOIN rating r_trakt ON r_trakt.media_id = e.idEpisode AND r_trakt.media_type = 'episode' AND r_trakt.rating_type = 'trakt'
 """
 
 _SQL_LIBRARY_SHOWS = """
@@ -323,8 +367,19 @@ SELECT s.idShow     AS kodi_idShow,
        s.c05        AS premiered,
        s.c08        AS genres,
        s.c02        AS status,
-       s.c14        AS studio
+       s.c14        AS studio,
+       s.userrating                             AS userrating,
+       r_imdb.rating                            AS rating_imdb,
+       r_imdb.votes                             AS votes_imdb,
+       COALESCE(r_tmdb1.rating, r_tmdb2.rating) AS rating_tmdb,
+       COALESCE(r_tmdb1.votes,  r_tmdb2.votes)  AS votes_tmdb,
+       r_trakt.rating                           AS rating_trakt,
+       r_trakt.votes                            AS votes_trakt
 FROM tvshow s
+LEFT JOIN rating r_imdb  ON r_imdb.media_id  = s.idShow AND r_imdb.media_type  = 'tvshow' AND r_imdb.rating_type  = 'imdb'
+LEFT JOIN rating r_tmdb1 ON r_tmdb1.media_id = s.idShow AND r_tmdb1.media_type = 'tvshow' AND r_tmdb1.rating_type = 'themoviedb'
+LEFT JOIN rating r_tmdb2 ON r_tmdb2.media_id = s.idShow AND r_tmdb2.media_type = 'tvshow' AND r_tmdb2.rating_type = 'tmdb'
+LEFT JOIN rating r_trakt ON r_trakt.media_id = s.idShow AND r_trakt.media_type = 'tvshow' AND r_trakt.rating_type = 'trakt'
 """
 # All columns confirmed via L-05 live DB query (2026-11-06):
 # c00=title  c01=plot  c02=status("Ending"/"Continuing")
@@ -420,6 +475,14 @@ class MediaIdentity:
     hdr_type: Optional[str] = None
     audio_codec: Optional[str] = None
     audio_channels: Optional[int] = None
+    # Ratings
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
 
 
 @dataclass
@@ -436,6 +499,14 @@ class LibraryMovie:
     play_count: Optional[int]
     last_played: Optional[str]
     tmdb_id: Optional[str] = None
+    # Ratings
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
 
 
 @dataclass
@@ -453,6 +524,14 @@ class LibraryEpisode:
     date_added: Optional[str]
     play_count: Optional[int]
     last_played: Optional[str]
+    # Ratings
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
 
 
 @dataclass
@@ -467,6 +546,14 @@ class LibraryShow:
     tvdb_id: Optional[str]
     imdb_id: Optional[str]
     tmdb_id: Optional[str]
+    # Ratings
+    rating_imdb: Optional[float] = None
+    votes_imdb: Optional[int] = None
+    rating_tmdb: Optional[float] = None
+    votes_tmdb: Optional[int] = None
+    rating_trakt: Optional[float] = None
+    votes_trakt: Optional[int] = None
+    userrating: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +749,13 @@ def identify_file(conn: pymysql.Connection, file_id: int) -> Optional[MediaIdent
         hdr_type=hdr_type,
         audio_codec=audio_codec,
         audio_channels=audio_channels,
+        rating_imdb=row["rating_imdb"],
+        votes_imdb=row["votes_imdb"],
+        rating_tmdb=row["rating_tmdb"],
+        votes_tmdb=row["votes_tmdb"],
+        rating_trakt=row["rating_trakt"],
+        votes_trakt=row["votes_trakt"],
+        userrating=row["userrating"] or None,
     )
 
 
@@ -827,6 +921,13 @@ def fetch_library_movies(conn: pymysql.Connection) -> list[LibraryMovie]:
             play_count=row["play_count"],
             last_played=row["last_played"] or None,
             tmdb_id=row["tmdb_id"] or None,
+            rating_imdb=row["rating_imdb"],
+            votes_imdb=row["votes_imdb"],
+            rating_tmdb=row["rating_tmdb"],
+            votes_tmdb=row["votes_tmdb"],
+            rating_trakt=row["rating_trakt"],
+            votes_trakt=row["votes_trakt"],
+            userrating=row["userrating"] or None,
         ))
     return result
 
@@ -857,6 +958,13 @@ def fetch_library_episodes(conn: pymysql.Connection) -> list[LibraryEpisode]:
             date_added=row["date_added"] or None,
             play_count=row["play_count"],
             last_played=row["last_played"] or None,
+            rating_imdb=row["rating_imdb"],
+            votes_imdb=row["votes_imdb"],
+            rating_tmdb=row["rating_tmdb"],
+            votes_tmdb=row["votes_tmdb"],
+            rating_trakt=row["rating_trakt"],
+            votes_trakt=row["votes_trakt"],
+            userrating=row["userrating"] or None,
         ))
     return result
 
@@ -904,6 +1012,13 @@ def fetch_library_shows(conn: pymysql.Connection) -> list[LibraryShow]:
                 tvdb_id=tvdb_id,
                 imdb_id=imdb_id,
                 tmdb_id=tmdb_id,
+                rating_imdb=row["rating_imdb"],
+                votes_imdb=row["votes_imdb"],
+                rating_tmdb=row["rating_tmdb"],
+                votes_tmdb=row["votes_tmdb"],
+                rating_trakt=row["rating_trakt"],
+                votes_trakt=row["votes_trakt"],
+                userrating=row["userrating"] or None,
             ))
 
     return result

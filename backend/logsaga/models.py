@@ -129,6 +129,15 @@ class KodiShow(Base):
         Enum(KodiState), nullable=False, default=KodiState.unwatched
     )
 
+    # Ratings (from Kodi's rating table — updated by library sync)
+    rating_imdb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    votes_imdb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rating_tmdb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    votes_tmdb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rating_trakt: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    votes_trakt: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    userrating: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 0–10, set in Kodi UI
+
     # Cast refresh tracking
     # cast_fetched_at: when cast was last successfully populated (NULL = never done)
     # cast_refresh_attempted_at: last attempt timestamp, success or failure (12-hour cooldown)
@@ -206,6 +215,15 @@ class MediaItem(Base):
 
     # Hash of scraped metadata fields — used to detect when a re-scrape changes the data
     metadata_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # Ratings (from Kodi's rating table — updated by library sync and poll loop)
+    rating_imdb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    votes_imdb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rating_tmdb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    votes_tmdb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rating_trakt: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    votes_trakt: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    userrating: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 0–10, set in Kodi UI
 
     # Cast refresh tracking (movies only; episodes use their parent kodi_show)
     cast_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

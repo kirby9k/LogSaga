@@ -186,6 +186,13 @@ def _upsert_media_item(
         kodi_file_id=file_id,
         kodi_media_id=identity.media_id,
         kodi_state=KodiState.unwatched,
+        rating_imdb=identity.rating_imdb,
+        votes_imdb=identity.votes_imdb,
+        rating_tmdb=identity.rating_tmdb,
+        votes_tmdb=identity.votes_tmdb,
+        rating_trakt=identity.rating_trakt,
+        votes_trakt=identity.votes_trakt,
+        userrating=identity.userrating,
         created_at=_now_utc(),
         updated_at=_now_utc(),
     )

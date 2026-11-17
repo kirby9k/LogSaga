@@ -133,6 +133,14 @@ def _sync_shows(kodi_conn, db, result: SyncResult) -> None:
                 row.imdb_id = show.imdb_id
             if show.tmdb_id:
                 row.tmdb_id = show.tmdb_id
+            # Ratings are always overwritten — community scores change over time
+            row.rating_imdb = show.rating_imdb
+            row.votes_imdb = show.votes_imdb
+            row.rating_tmdb = show.rating_tmdb
+            row.votes_tmdb = show.votes_tmdb
+            row.rating_trakt = show.rating_trakt
+            row.votes_trakt = show.votes_trakt
+            row.userrating = show.userrating
             row.updated_at = now
             result.shows_updated += 1
         elif show.tmdb_id and show.tmdb_id in tmdb_only:
@@ -150,6 +158,13 @@ def _sync_shows(kodi_conn, db, result: SyncResult) -> None:
                 row.tvdb_id = show.tvdb_id
             if show.imdb_id:
                 row.imdb_id = show.imdb_id
+            row.rating_imdb = show.rating_imdb
+            row.votes_imdb = show.votes_imdb
+            row.rating_tmdb = show.rating_tmdb
+            row.votes_tmdb = show.votes_tmdb
+            row.rating_trakt = show.rating_trakt
+            row.votes_trakt = show.votes_trakt
+            row.userrating = show.userrating
             row.updated_at = now
             existing[kid] = row  # keep the unique-constraint in sync
             result.shows_updated += 1
@@ -167,6 +182,13 @@ def _sync_shows(kodi_conn, db, result: SyncResult) -> None:
                 imdb_id=show.imdb_id,
                 tmdb_id=show.tmdb_id,
                 kodi_state=KodiState.unwatched,
+                rating_imdb=show.rating_imdb,
+                votes_imdb=show.votes_imdb,
+                rating_tmdb=show.rating_tmdb,
+                votes_tmdb=show.votes_tmdb,
+                rating_trakt=show.rating_trakt,
+                votes_trakt=show.votes_trakt,
+                userrating=show.userrating,
                 created_at=now,
                 updated_at=now,
             )
@@ -238,6 +260,14 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
                     item.year = int(movie.release_date[:4])
                 except (ValueError, IndexError):
                     pass
+            # Ratings are always overwritten — community scores change over time
+            item.rating_imdb = movie.rating_imdb
+            item.votes_imdb = movie.votes_imdb
+            item.rating_tmdb = movie.rating_tmdb
+            item.votes_tmdb = movie.votes_tmdb
+            item.rating_trakt = movie.rating_trakt
+            item.votes_trakt = movie.votes_trakt
+            item.userrating = movie.userrating
             item.updated_at = now
             result.movies_updated += 1
         elif movie.tmdb_id and movie.tmdb_id in tmdb_only_movies:
@@ -255,6 +285,13 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
                 item.genres = movie.genres
             if not item.director and movie.director:
                 item.director = movie.director
+            item.rating_imdb = movie.rating_imdb
+            item.votes_imdb = movie.votes_imdb
+            item.rating_tmdb = movie.rating_tmdb
+            item.votes_tmdb = movie.votes_tmdb
+            item.rating_trakt = movie.rating_trakt
+            item.votes_trakt = movie.votes_trakt
+            item.userrating = movie.userrating
             item.updated_at = now
             existing[movie.media_id] = item  # keep primary index consistent
             result.movies_updated += 1
@@ -279,6 +316,13 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
                 kodi_file_id=movie.file_id,
                 kodi_media_id=movie.media_id,
                 kodi_state=_derive_state(movie.play_count, None),
+                rating_imdb=movie.rating_imdb,
+                votes_imdb=movie.votes_imdb,
+                rating_tmdb=movie.rating_tmdb,
+                votes_tmdb=movie.votes_tmdb,
+                rating_trakt=movie.rating_trakt,
+                votes_trakt=movie.votes_trakt,
+                userrating=movie.userrating,
                 created_at=now,
                 updated_at=now,
             )
@@ -371,6 +415,14 @@ def _sync_episodes(
                     item.year = int(ep.release_date[:4])
                 except (ValueError, IndexError):
                     pass
+            # Ratings are always overwritten — community scores change over time
+            item.rating_imdb = ep.rating_imdb
+            item.votes_imdb = ep.votes_imdb
+            item.rating_tmdb = ep.rating_tmdb
+            item.votes_tmdb = ep.votes_tmdb
+            item.rating_trakt = ep.rating_trakt
+            item.votes_trakt = ep.votes_trakt
+            item.userrating = ep.userrating
             item.updated_at = now
             result.episodes_updated += 1
         else:
@@ -390,6 +442,13 @@ def _sync_episodes(
                 tmdb_match.kodi_state = _derive_state(ep.play_count, tmdb_match.kodi_state)
                 tmdb_match.date_added = date_added
                 tmdb_match.show_id = show_id
+                tmdb_match.rating_imdb = ep.rating_imdb
+                tmdb_match.votes_imdb = ep.votes_imdb
+                tmdb_match.rating_tmdb = ep.rating_tmdb
+                tmdb_match.votes_tmdb = ep.votes_tmdb
+                tmdb_match.rating_trakt = ep.rating_trakt
+                tmdb_match.votes_trakt = ep.votes_trakt
+                tmdb_match.userrating = ep.userrating
                 tmdb_match.updated_at = now
                 existing[ep.media_id] = tmdb_match
                 result.episodes_updated += 1
@@ -416,6 +475,13 @@ def _sync_episodes(
                     kodi_media_id=ep.media_id,
                     show_id=show_id,
                     kodi_state=_derive_state(ep.play_count, None),
+                    rating_imdb=ep.rating_imdb,
+                    votes_imdb=ep.votes_imdb,
+                    rating_tmdb=ep.rating_tmdb,
+                    votes_tmdb=ep.votes_tmdb,
+                    rating_trakt=ep.rating_trakt,
+                    votes_trakt=ep.votes_trakt,
+                    userrating=ep.userrating,
                     created_at=now,
                     updated_at=now,
                 )

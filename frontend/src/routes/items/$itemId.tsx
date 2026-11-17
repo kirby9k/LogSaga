@@ -9,6 +9,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { PercentBar } from '@/components/shared/PercentBar'
 import { TimeAgo } from '@/components/shared/TimeAgo'
 import { RuntimeDisplay } from '@/components/shared/RuntimeDisplay'
+import { RatingsRow } from '@/components/shared/RatingBadges'
 import { ErrorState } from '@/components/shared/ErrorState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
@@ -233,6 +234,9 @@ function ItemDetailPage() {
               </div>
             )
           })()}
+
+          {/* Ratings */}
+          <RatingsRow item={data} />
 
           {/* External IDs */}
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
