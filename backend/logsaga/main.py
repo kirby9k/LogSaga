@@ -562,6 +562,18 @@ async def _enrich_played_items_bg(app: FastAPI, item_ids: list[int]) -> None:
         logger.error("enrich_played_items_failed", error=str(exc))
 
 
+async def _delayed_fill_artwork_bg(app: FastAPI, delay_s: int = 300) -> None:
+    """
+    Re-run artwork fill after a delay.
+
+    Kodi may not have finished writing its art table rows for brand-new items
+    by the time the library sync fires.  Scheduling a second pass a few minutes
+    later catches what the first attempt missed without polling continuously.
+    """
+    await asyncio.sleep(delay_s)
+    await _fill_missing_artwork_bg(app)
+
+
 async def _fill_missing_artwork_bg(app: FastAPI) -> None:
     """
     Fire-and-forget: fetch artwork for all items that have no downloaded artwork.
@@ -902,16 +914,18 @@ async def _library_sync_loop(app: FastAPI) -> None:
                     has_new = await asyncio.to_thread(
                         _run_library_sync, app.state.engine, kodi.conn, cfg
                     )
-                    # Always scan for items missing artwork — the fast-sync path
-                    # (Stage B) may fire before Kodi has finished writing art
-                    # table rows for new episodes/shows, so the first attempt
-                    # finds nothing and no retry would ever trigger without this.
-                    # _fill_missing_artwork_bg exits immediately (no Kodi conn
-                    # opened) when every item already has local artwork.
+                    # Always scan for items missing artwork — exits immediately
+                    # (no Kodi connection opened) when all items already have art.
                     asyncio.create_task(_fill_missing_artwork_bg(app))
-                    # Cast population is heavier; only run when items are new.
                     if has_new:
-                        asyncio.create_task(_fill_missing_cast_bg(app))
+                        # Delayed second pass: Kodi may not have finished writing
+                        # art table rows for brand-new items by the time the sync
+                        # fires.  5 minutes later they should be ready.
+                        asyncio.create_task(_delayed_fill_artwork_bg(app, delay_s=300))
+                        # Fire cast sync immediately with live TMDB calls so cast
+                        # is populated within seconds rather than waiting up to 24 h
+                        # for the scheduled cast_sync_loop.
+                        asyncio.create_task(_run_cast_sync_bg(app))
                 else:
                     logger.warning("library_sync_skipped_no_kodi_conn")
         except asyncio.CancelledError:
