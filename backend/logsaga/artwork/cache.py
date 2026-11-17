@@ -23,7 +23,10 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from logsaga.tmdb.client import TMDBClient
 from urllib.parse import urlparse
 
 import httpx
@@ -691,6 +694,105 @@ async def fetch_tmdb_artwork_async(item: MediaItem, db: Session, cfg: Settings) 
     if updated:
         db.commit()
     return updated
+
+
+async def fetch_artwork_tmdb_fallback_async(
+    item: MediaItem,
+    missing_types: set[str],
+    tmdb: "TMDBClient",
+    db: Session,
+    cfg: Settings,
+) -> int:
+    """
+    Inject TMDB CDN URLs for missing art types then download them.
+
+    For each type in missing_types, calls the appropriate TMDB endpoint to
+    resolve a CDN URL, creates or updates an Artwork stub row with that URL
+    (which resets consecutive_failures when the URL changes), then delegates
+    the actual download to fetch_tmdb_artwork_async.
+
+    Returns the count of artwork rows successfully downloaded.
+    """
+    import asyncio
+
+    if not missing_types:
+        return 0
+
+    urls: dict[str, str] = {}  # art_type -> https CDN URL
+
+    if item.media_type == "movie" and item.tmdb_id:
+        try:
+            detail = await asyncio.to_thread(tmdb.movie_detail, int(item.tmdb_id))
+        except Exception as exc:
+            logger.warning("tmdb_fallback_movie_detail_failed",
+                           item_id=item.id, error=str(exc))
+            return 0
+        if "poster" in missing_types and detail.get("poster_path"):
+            url = tmdb.poster_url(detail["poster_path"])
+            if url:
+                urls["poster"] = url
+        if "fanart" in missing_types and detail.get("backdrop_path"):
+            url = tmdb.backdrop_url(detail["backdrop_path"])
+            if url:
+                urls["fanart"] = url
+
+    elif item.media_type == "episode" and item.show_id:
+        from logsaga.models import KodiShow
+        show = db.get(KodiShow, item.show_id)
+        if not show or not show.tmdb_id:
+            return 0
+        show_tmdb_id = int(show.tmdb_id)
+
+        if "thumb" in missing_types and item.season is not None and item.episode is not None:
+            try:
+                season_data = await asyncio.to_thread(
+                    tmdb.season_detail, show_tmdb_id, item.season
+                )
+                ep = next(
+                    (
+                        e for e in season_data.get("episodes", [])
+                        if e.get("episode_number") == item.episode
+                    ),
+                    None,
+                )
+                if ep and ep.get("still_path"):
+                    url = tmdb.backdrop_url(ep["still_path"], size="w780")
+                    if url:
+                        urls["thumb"] = url
+            except Exception as exc:
+                logger.warning("tmdb_fallback_season_detail_failed",
+                               item_id=item.id, season=item.season, error=str(exc))
+
+        if "tvshow.poster" in missing_types:
+            try:
+                tv_data = await asyncio.to_thread(tmdb.tv_detail, show_tmdb_id)
+                if tv_data.get("poster_path"):
+                    url = tmdb.poster_url(tv_data["poster_path"])
+                    if url:
+                        urls["tvshow.poster"] = url
+            except Exception as exc:
+                logger.warning("tmdb_fallback_tv_detail_failed",
+                               item_id=item.id, show_tmdb_id=show_tmdb_id, error=str(exc))
+
+    if not urls:
+        return 0
+
+    # Inject stub rows with TMDB URLs.  _upsert_artwork resets
+    # consecutive_failures when source_url changes, giving stuck rows a
+    # fresh download budget with the new URL.
+    for art_type, url in urls.items():
+        _upsert_artwork(
+            db, item.id, art_type, url,
+            local_path=None,
+            thumbnail_path=None,
+            file_size=None,
+            fetch_error=None,
+        )
+    db.commit()
+
+    # Delegate download to existing pipeline — picks up all rows with
+    # local_path IS NULL AND source_url LIKE 'https://%'.
+    return await fetch_tmdb_artwork_async(item, db, cfg)
 
 
 def fetch_all_artwork(

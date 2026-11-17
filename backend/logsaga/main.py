@@ -577,76 +577,131 @@ async def _delayed_fill_artwork_bg(app: FastAPI, delay_s: int = 300) -> None:
 
 async def _fill_missing_artwork_bg(app: FastAPI) -> None:
     """
-    Fire-and-forget: fetch artwork for all items that have no downloaded artwork.
+    Fire-and-forget: fetch artwork for all items missing any required art type.
 
-    Runs after library sync when new items are found.  Uses a subquery to skip
-    items that already have at least one Artwork row with a local_path so this
-    is a cheap no-op once artwork is fully populated.
-    Opens its own Kodi connection only when there is actual work to do.
+    Stage 1 (sync thread): uses find_items_with_missing_art to identify items
+    missing poster/fanart (movies) or thumb/tvshow.poster (episodes), including
+    TMDB-only items.  Kodi-library items are fetched from the Kodi art table.
+    Stage 2 (async): TMDB fallback for items still missing required types after
+    the Kodi pass — downloads from TMDB CDN using cached TMDB data.
     """
     cfg = app.state.settings
     engine = app.state.engine
 
-    def _sync() -> int:
+    def _kodi_pass() -> list[int]:
         from logsaga.artwork.cache import fetch_artwork_for_item
+        from logsaga.artwork.service import find_items_with_missing_art
         from logsaga.kodi.db import connect, detect_db_name
         from logsaga.kodi.jsonrpc import KodiJSONRPC
-        from logsaga.models import Artwork as _Artwork
 
         SessionLocal = sessionmaker(bind=engine, autoflush=False)
 
-        # Quick DB-only pass: find items with no downloaded artwork.
         with SessionLocal() as db:
-            has_art_sq = (
-                db.query(_Artwork.media_item_id)
-                .filter(_Artwork.local_path.isnot(None))
-                .distinct()
-                .subquery()
-            )
-            item_ids = [
-                r[0] for r in
-                db.query(MediaItem.id)
-                .filter(
-                    MediaItem.kodi_media_id.isnot(None),
-                    ~MediaItem.id.in_(has_art_sq),
-                )
-                .all()
-            ]
+            item_ids = find_items_with_missing_art(db)
 
         if not item_ids:
-            return 0  # Nothing to do — skip opening a Kodi connection.
+            return []
 
-        logger.info("auto_artwork_fill_start", items_without_art=len(item_ids))
+        logger.info("auto_artwork_fill_start", items_missing_art=len(item_ids))
 
-        db_name = detect_db_name(cfg)
-        conn = connect(cfg, db_name=db_name)
-        rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
-        total = 0
-        try:
+        # Kodi fetch pass — only for items still linked to the Kodi library
+        kodi_ids = []
+        with SessionLocal() as db:
             for iid in item_ids:
-                with SessionLocal() as db:
-                    item = db.get(MediaItem, iid)
-                    if item is None:
-                        continue
-                    try:
-                        count = fetch_artwork_for_item(item, conn, rpc, db, cfg)
-                        db.commit()
-                        total += count
-                    except Exception as exc:
-                        db.rollback()
-                        logger.warning("auto_artwork_item_failed", item_id=iid, error=str(exc))
-        finally:
-            conn.close()
-            if rpc:
-                rpc.close()
-        return total
+                item = db.get(MediaItem, iid)
+                if item and item.kodi_media_id is not None:
+                    kodi_ids.append(iid)
+
+        if kodi_ids:
+            db_name = detect_db_name(cfg)
+            conn = connect(cfg, db_name=db_name)
+            rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
+            try:
+                for iid in kodi_ids:
+                    with SessionLocal() as db:
+                        item = db.get(MediaItem, iid)
+                        if item is None:
+                            continue
+                        try:
+                            fetch_artwork_for_item(item, conn, rpc, db, cfg)
+                            db.commit()
+                        except Exception as exc:
+                            db.rollback()
+                            logger.warning("auto_artwork_item_failed",
+                                           item_id=iid, error=str(exc))
+            finally:
+                conn.close()
+                if rpc:
+                    rpc.close()
+
+        return item_ids  # full list for TMDB fallback pass
 
     try:
-        updated = await asyncio.to_thread(_sync)
-        if updated:
-            logger.info("auto_artwork_fill_done", artwork_rows=updated)
+        all_item_ids = await asyncio.to_thread(_kodi_pass)
     except Exception as exc:
         logger.error("auto_artwork_fill_failed", error=str(exc))
+        return
+
+    if not all_item_ids:
+        return
+
+    # Stage 2 — TMDB fallback for items still missing required types
+    if cfg.tmdb_api_key:
+        from logsaga.artwork.cache import fetch_artwork_tmdb_fallback_async
+        from logsaga.artwork.service import get_missing_art_types
+        from logsaga.tmdb.client import TMDBClient
+
+        SessionLocal = sessionmaker(bind=engine, autoflush=False)
+        tmdb_total = 0
+
+        for iid in all_item_ids:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, iid)
+                if item is None:
+                    continue
+                missing = get_missing_art_types(item, db)
+                if not missing:
+                    continue
+                try:
+                    tmdb = TMDBClient(cfg.tmdb_api_key, db)
+                    count = await fetch_artwork_tmdb_fallback_async(
+                        item, missing, tmdb, db, cfg
+                    )
+                    tmdb_total += count
+                except Exception as exc:
+                    logger.warning("auto_artwork_tmdb_fallback_failed",
+                                   item_id=iid, error=str(exc))
+
+        if tmdb_total:
+            logger.info("auto_artwork_tmdb_fallback_done", artwork_rows=tmdb_total)
+
+    logger.info("auto_artwork_fill_done")
+
+
+async def _artwork_audit_loop(app: FastAPI) -> None:
+    """
+    Periodic background task: reset stuck retry budgets then re-run fill.
+
+    Runs 10 minutes after startup (to avoid competing with the initial library
+    sync) and then every 7 days.  Resets Artwork rows whose retry budget is
+    exhausted (consecutive_failures >= 3, retry_after NULL, local_path NULL)
+    so they get a fresh attempt — useful for items whose artwork source was
+    temporarily unavailable.
+    """
+    await asyncio.sleep(600)  # 10-minute startup delay
+    while True:
+        try:
+            engine = app.state.engine
+            SessionLocal = sessionmaker(bind=engine, autoflush=False)
+            with SessionLocal() as db:
+                from logsaga.artwork.service import reset_stuck_retry_budgets
+                n = reset_stuck_retry_budgets(db)
+                if n:
+                    db.commit()
+            await _fill_missing_artwork_bg(app)
+        except Exception as exc:
+            logger.warning("artwork_audit_error", error=str(exc))
+        await asyncio.sleep(7 * 24 * 3600)  # 7 days
 
 
 async def _fill_missing_cast_bg(app: FastAPI) -> None:
@@ -1200,6 +1255,9 @@ async def lifespan(app: FastAPI):
 
     library_task = asyncio.create_task(_library_sync_loop(app))
     tasks.append(library_task)
+
+    artwork_audit_task = asyncio.create_task(_artwork_audit_loop(app))
+    tasks.append(artwork_audit_task)
 
     if cfg.tmdb_enabled:
         cast_task = asyncio.create_task(_cast_sync_loop(app))

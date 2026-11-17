@@ -14,6 +14,8 @@ import {
   useVerifyBackup,
   useRestoreBackup,
   useDeleteBackup,
+  useArtworkMissing,
+  useRecoverMissingArtwork,
   type AdminSettings,
   type JobState,
   type BackupInfoOut,
@@ -65,6 +67,8 @@ function SettingsPage() {
   const { data: health, isLoading } = useHealth()
   const rebuild = useRebuildSessions()
   const { data: artStatus } = useArtworkStatus()
+  const { data: artMissing } = useArtworkMissing()
+  const recoverMissing = useRecoverMissingArtwork()
   const { data: castStatus } = useCastStatus()
   const { data: settingsData, isLoading: settingsLoading } = useAdminSettings()
   const updateSettings = useUpdateSettings()
@@ -309,6 +313,35 @@ function SettingsPage() {
                 <p className="text-xs text-muted-foreground text-right">
                   {Math.round((artStatus.items_with_artwork / artStatus.total_items) * 100)}% complete
                 </p>
+              </div>
+            )}
+            {artMissing && artMissing.total_missing > 0 && (
+              <Row label="Missing required art">
+                <span className="text-amber-400">{artMissing.total_missing} items</span>
+              </Row>
+            )}
+            {artMissing && artMissing.total_missing > 0 && (
+              <div className="flex items-center gap-3 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={recoverMissing.isPending}
+                  onClick={() => recoverMissing.mutate()}
+                >
+                  {recoverMissing.isPending
+                    ? <><RefreshCw size={12} className="animate-spin" /> Starting…</>
+                    : <><Play size={12} /> Recover Missing</>
+                  }
+                </Button>
+                {recoverMissing.isSuccess && (
+                  <p className="text-xs text-muted-foreground">Recovery started in background.</p>
+                )}
+                {recoverMissing.isError && (
+                  <p className="text-xs text-destructive">
+                    {(recoverMissing.error as Error).message}
+                  </p>
+                )}
               </div>
             )}
           </CardContent>

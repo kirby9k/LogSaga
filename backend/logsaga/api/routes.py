@@ -26,7 +26,9 @@ from logsaga.api.schemas import (
     AdminSettingsIn,
     FilmographyItemOut,
     AdminSettingsOut,
+    ArtworkMissingOut,
     ArtworkOut,
+    ArtworkRecoverOut,
     ArtworkStatusOut,
     CastStatusOut,
     ConfigAllOut,
@@ -1119,6 +1121,93 @@ async def get_item(
 
 
 # ---------------------------------------------------------------------------
+# POST /items/{item_id}/recover-artwork
+# ---------------------------------------------------------------------------
+@router.post("/items/{item_id}/recover-artwork", response_model=list[ArtworkOut])
+async def recover_item_artwork(
+    item_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    cfg: Settings = Depends(get_cfg),
+) -> list[ArtworkOut]:
+    """
+    Targeted artwork recovery for a single item.
+
+    Tries Kodi first (if the item is still in the Kodi library), then falls
+    back to TMDB for any types still missing.  Rate-limited to once per
+    10 minutes per item.
+
+    Returns the updated artwork list for the item.
+    """
+    from datetime import timedelta
+
+    item = db.get(MediaItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+    # Rate-limit: once per 10 minutes per item
+    now = _now_utc()
+    last = _recover_artwork_cooldown.get(item_id)
+    if last and (now - last).total_seconds() < 600:
+        pass  # Silently return current artwork — don't reject with error
+    else:
+        _recover_artwork_cooldown[item_id] = now
+
+        # Kodi pass (sync, in thread)
+        if item.kodi_media_id is not None:
+            def _kodi_fetch() -> None:
+                from logsaga.artwork.cache import fetch_artwork_for_item
+                from logsaga.kodi.db import connect, detect_db_name
+                from logsaga.kodi.jsonrpc import KodiJSONRPC
+                from sqlalchemy.orm import sessionmaker as _sm
+                SessionLocal = _sm(bind=request.app.state.engine, autoflush=False)
+                db_name = detect_db_name(cfg)
+                conn = connect(cfg, db_name=db_name)
+                rpc = KodiJSONRPC(cfg) if cfg.kodi_jsonrpc_url else None
+                try:
+                    with SessionLocal() as _db:
+                        _item = _db.get(MediaItem, item_id)
+                        if _item:
+                            fetch_artwork_for_item(_item, conn, rpc, _db, cfg, force=True)
+                            _db.commit()
+                finally:
+                    conn.close()
+                    if rpc:
+                        rpc.close()
+            try:
+                await asyncio.to_thread(_kodi_fetch)
+            except Exception as exc:
+                logger.warning("recover_artwork_kodi_failed",
+                               item_id=item_id, error=str(exc))
+
+        # TMDB fallback for still-missing types
+        if cfg.tmdb_api_key:
+            from logsaga.artwork.cache import fetch_artwork_tmdb_fallback_async
+            from logsaga.artwork.service import get_missing_art_types
+            from logsaga.tmdb.client import TMDBClient
+            # Re-query item with fresh session to reflect Kodi fetch results
+            from sqlalchemy.orm import sessionmaker as _sm2
+            with _sm2(bind=request.app.state.engine, autoflush=False)() as fdb:
+                fresh = fdb.get(MediaItem, item_id)
+                if fresh:
+                    missing = get_missing_art_types(fresh, fdb)
+                    if missing:
+                        try:
+                            tmdb = TMDBClient(cfg.tmdb_api_key, fdb)
+                            await fetch_artwork_tmdb_fallback_async(
+                                fresh, missing, tmdb, fdb, cfg
+                            )
+                        except Exception as exc:
+                            logger.warning("recover_artwork_tmdb_failed",
+                                           item_id=item_id, error=str(exc))
+
+    # Return fresh artwork list
+    db.expire(item)
+    db.refresh(item)
+    return [ArtworkOut.model_validate(a) for a in item.artwork]
+
+
+# ---------------------------------------------------------------------------
 # DELETE /sessions/{session_id}  — permanently delete a watch session
 # ---------------------------------------------------------------------------
 from fastapi import Response as _Response  # noqa: E402
@@ -1581,6 +1670,87 @@ def get_artwork_status(
 
 
 # ---------------------------------------------------------------------------
+# GET /admin/artwork/missing
+# ---------------------------------------------------------------------------
+@router.get("/admin/artwork/missing", response_model=ArtworkMissingOut)
+def get_artwork_missing(
+    db: Session = Depends(get_db),
+) -> ArtworkMissingOut:
+    """
+    Count items missing at least one required art type.
+
+    Required types: movies need poster + fanart; episodes need thumb + tvshow.poster.
+    Includes both Kodi-library items and TMDB-only stubs.
+    """
+    from logsaga.artwork.service import REQUIRED_ART_TYPES, find_items_with_missing_art
+
+    missing_ids = set(find_items_with_missing_art(db))
+    total_missing = len(missing_ids)
+
+    # Count per art type
+    by_type: dict[str, int] = {}
+    for media_type, art_types in REQUIRED_ART_TYPES.items():
+        for art_type in art_types:
+            has_art_sq = (
+                db.query(Artwork.media_item_id)
+                .filter(
+                    Artwork.art_type == art_type,
+                    Artwork.local_path.isnot(None),
+                )
+                .subquery()
+            )
+            count = (
+                db.query(func.count(MediaItem.id))
+                .filter(
+                    MediaItem.media_type == media_type,
+                    ~MediaItem.id.in_(has_art_sq),
+                )
+                .scalar()
+            ) or 0
+            if count:
+                by_type[art_type] = count
+
+    return ArtworkMissingOut(total_missing=total_missing, by_type=by_type)
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/artwork/recover-missing
+# ---------------------------------------------------------------------------
+@router.post("/admin/artwork/recover-missing")
+async def recover_missing_artwork(
+    request: Request,
+    cfg: Settings = Depends(get_cfg),
+) -> dict:
+    """
+    Reset stuck retry budgets and re-run artwork fill for all items missing
+    required art types.
+
+    Unlike /admin/fetch-artwork (which force-fetches everything), this endpoint:
+    - Only targets items actually missing required art types
+    - Resets artwork rows whose retry budget is exhausted (3+ failures)
+    - Falls back to TMDB when Kodi's art table has no URL for a type
+
+    Returns 409 if the fetch_artwork job is already running.
+    """
+    if _job_state["fetch_artwork"]["running"]:
+        raise HTTPException(status_code=409, detail="fetch_artwork job is already running")
+
+    async def _do_recover() -> str:
+        from logsaga.artwork.service import reset_stuck_retry_budgets
+        engine = request.app.state.engine
+        SessionLocal = sessionmaker(bind=engine, autoflush=False)
+        with SessionLocal() as db:
+            n = reset_stuck_retry_budgets(db)
+            if n:
+                db.commit()
+        await _fill_missing_artwork_bg(request.app)
+        return f"Recovery complete: reset {n} stuck rows"
+
+    asyncio.create_task(_run_job("fetch_artwork", _do_recover))
+    return {"message": "Artwork recovery started"}
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/cast-status
 # ---------------------------------------------------------------------------
 @router.get("/admin/cast-status", response_model=CastStatusOut)
@@ -1731,6 +1901,9 @@ _job_state: dict[str, dict] = {
     "enrich_tmdb_ids":  {"running": False, "last_run": None, "last_result": None},
     "rebuild_sessions": {"running": False, "last_run": None, "last_result": None},
 }
+
+# Per-item cooldown for POST /items/{id}/recover-artwork (10 minutes)
+_recover_artwork_cooldown: dict[int, datetime] = {}
 
 
 async def _run_job(name: str, coro) -> None:

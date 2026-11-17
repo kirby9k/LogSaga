@@ -12,6 +12,7 @@ import { apiClient } from './client'
 export const QK = {
   health: ['health'] as const,
   artworkStatus: ['artworkStatus'] as const,
+  artworkMissing: ['artworkMissing'] as const,
   castStatus: ['castStatus'] as const,
   backupList: ['backupList'] as const,
   recent: (params: RecentParams) => ['recent', params] as const,
@@ -826,6 +827,14 @@ export interface RestoreResultOut {
 export type BackupTarget = { file: File } | { filename: string }
 
 // ---------------------------------------------------------------------------
+// Artwork missing / recovery types
+// ---------------------------------------------------------------------------
+export interface ArtworkMissingOut {
+  total_missing: number
+  by_type: Record<string, number>  // e.g. { poster: 42, fanart: 7, thumb: 15 }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/admin/backup  — list server-side backups
 // ---------------------------------------------------------------------------
 export function useBackupList() {
@@ -924,5 +933,57 @@ export function useDeleteBackup() {
       }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: QK.backupList }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/artwork/recover-missing  — reset stuck budgets + fill
+// ---------------------------------------------------------------------------
+export function useRecoverMissingArtwork() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      const response = await fetch('/api/admin/artwork/recover-missing', { method: 'POST' })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `HTTP ${response.status}`)
+      }
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: QK.artworkMissing }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/artwork/missing  — count items missing required art types
+// ---------------------------------------------------------------------------
+export function useArtworkMissing() {
+  return useQuery({
+    queryKey: QK.artworkMissing,
+    queryFn: async (): Promise<ArtworkMissingOut> => {
+      const response = await fetch('/api/admin/artwork/missing')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return response.json()
+    },
+    staleTime: 60_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/items/{id}/recover-artwork  — single-item targeted recovery
+// ---------------------------------------------------------------------------
+export function useRecoverItemArtwork(itemId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      const response = await fetch(`/api/items/${itemId}/recover-artwork`, { method: 'POST' })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `HTTP ${response.status}`)
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QK.item(itemId) })
+      queryClient.invalidateQueries({ queryKey: QK.artworkMissing })
+    },
   })
 }

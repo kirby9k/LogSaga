@@ -368,6 +368,17 @@ class ArtworkStatusOut(BaseModel):
     pending: int
 
 
+class ArtworkMissingOut(BaseModel):
+    total_missing: int              # items missing at least one required type
+    by_type: dict[str, int]         # e.g. {"poster": 42, "fanart": 7, "thumb": 15}
+
+
+class ArtworkRecoverOut(BaseModel):
+    items_checked: int
+    artwork_updated: int
+    message: str
+
+
 class CastStatusOut(BaseModel):
     total_items: int
     items_with_cast: int

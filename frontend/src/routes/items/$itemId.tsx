@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useItem, useHideSession } from '@/api/queries'
+import { useItem, useHideSession, useRecoverItemArtwork } from '@/api/queries'
 import type { WatchedItemIn } from '@/api/queries'
 import { AddToHistoryDialog } from '@/components/shared/AddToHistoryDialog'
 import { CastRow } from '@/components/shared/CastRow'
@@ -29,7 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { BookmarkPlus, ChevronDown, Trash2 } from 'lucide-react'
+import { BookmarkPlus, ChevronDown, RefreshCw, Trash2 } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { formatEpisode, formatDate, formatRuntime } from '@/lib/format'
 import { KODI_STATE_LABELS, COMPLETION_REASON_LABELS } from '@/lib/constants'
@@ -79,6 +79,15 @@ function ItemDetailPage() {
   const id = Number(itemId)
   const { data, isLoading, isError } = useItem(id)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const recoverArtwork = useRecoverItemArtwork(id)
+
+  const missingRequiredArt = useMemo(() => {
+    if (!data) return false
+    const required = data.media_type === 'episode'
+      ? ['thumb', 'tvshow.poster']
+      : ['poster', 'fanart']
+    return required.some(t => !data.artwork.find(a => a.art_type === t && a.local_path))
+  }, [data])
 
   if (isLoading) {
     return (
@@ -262,9 +271,9 @@ function ItemDetailPage() {
             )}
           </div>
 
-          {/* Add to History */}
-          {data.tmdb_id && (
-            <div className="pt-1">
+          {/* Add to History + Fetch Missing Artwork */}
+          <div className="flex flex-wrap gap-2 pt-1">
+            {data.tmdb_id && (
               <Button
                 variant="outline"
                 size="sm"
@@ -273,8 +282,21 @@ function ItemDetailPage() {
                 <BookmarkPlus size={14} className="mr-1.5" />
                 Add to History
               </Button>
-            </div>
-          )}
+            )}
+            {missingRequiredArt && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={recoverArtwork.isPending}
+                onClick={() => recoverArtwork.mutate()}
+              >
+                {recoverArtwork.isPending
+                  ? <><RefreshCw size={14} className="mr-1.5 animate-spin" /> Fetching…</>
+                  : 'Fetch Missing Artwork'
+                }
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Episode screencap — right column, same width as poster */}
