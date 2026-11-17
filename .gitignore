@@ -9,9 +9,12 @@ tasks.md
 notes/
 .private/
 
-# Debug scripts
+# Debug scripts and local test data
 backend/check_item.py
 backend/test_out.txt
+explore_ratings.py
+test_out.txt
+trakt_test_data/
 
 # SQLite database files
 *.db
