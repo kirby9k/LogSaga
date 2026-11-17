@@ -1058,7 +1058,7 @@ async def lifespan(app: FastAPI):
     _root.addHandler(_sh)
 
     # Rotating file: 5 MB × 5 backups — lives next to logsaga.db
-    _log_path = Path(db_path).parent / "logsaga.log"
+    _log_path = Path(_db_path(cfg)).parent / "logsaga.log"
     try:
         _fh = logging.handlers.RotatingFileHandler(
             str(_log_path), maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8",
