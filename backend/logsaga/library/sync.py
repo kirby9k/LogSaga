@@ -260,6 +260,9 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
                     item.year = int(movie.release_date[:4])
                 except (ValueError, IndexError):
                     pass
+            # Copy tmdb_id from Kodi when it's missing (enables cast enrichment)
+            if not item.tmdb_id and movie.tmdb_id:
+                item.tmdb_id = movie.tmdb_id
             # Ratings are always overwritten — community scores change over time
             item.rating_imdb = movie.rating_imdb
             item.votes_imdb = movie.votes_imdb
@@ -315,6 +318,7 @@ def _sync_movies(kodi_conn, db, result: SyncResult) -> None:
                 date_added=date_added,
                 kodi_file_id=movie.file_id,
                 kodi_media_id=movie.media_id,
+                tmdb_id=movie.tmdb_id,
                 kodi_state=_derive_state(movie.play_count, None),
                 rating_imdb=movie.rating_imdb,
                 votes_imdb=movie.votes_imdb,

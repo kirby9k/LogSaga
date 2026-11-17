@@ -1801,11 +1801,12 @@ async def _do_sync_library(engine, cfg: Settings) -> str:
 
 
 async def _do_fetch_artwork(engine, cfg: Settings) -> str:
-    """Fetch artwork for all Kodi-library items using async parallel HTTP."""
+    """Fetch artwork for all items: Kodi-library items via Kodi art table, TMDB-only items via TMDB URLs."""
     import httpx
-    from logsaga.artwork.cache import fetch_artwork_for_item_async
+    from logsaga.artwork.cache import fetch_artwork_for_item_async, fetch_tmdb_artwork_async
     from logsaga.kodi.db import connect, detect_db_name
     from logsaga.kodi.jsonrpc import KodiJSONRPC
+    from logsaga.models import Artwork as _Artwork
     from sqlalchemy.orm import sessionmaker as _sm
 
     _CONCURRENCY = 5
@@ -1819,6 +1820,16 @@ async def _do_fetch_artwork(engine, cfg: Settings) -> str:
                 r[0] for r in
                 db.query(MediaItem.id)
                 .filter(MediaItem.kodi_media_id.isnot(None))
+                .all()
+            ]
+            # TMDB-only items (kodi_media_id is None) that have pending artwork stubs
+            tmdb_only_ids = [
+                r[0] for r in
+                db.query(MediaItem.id)
+                .filter(MediaItem.kodi_media_id.is_(None))
+                .join(_Artwork, _Artwork.media_item_id == MediaItem.id)
+                .filter(_Artwork.local_path.is_(None))
+                .distinct()
                 .all()
             ]
 
@@ -1846,7 +1857,25 @@ async def _do_fetch_artwork(engine, cfg: Settings) -> str:
             for coro in asyncio.as_completed([fetch_one(iid) for iid in item_ids]):
                 total_updated += await coro
 
-        return f"{len(item_ids)} items scanned, {total_updated} artwork rows updated"
+        # Process TMDB-only items sequentially (they download from TMDB CDN directly)
+        tmdb_updated = 0
+        for iid in tmdb_only_ids:
+            with SessionLocal() as db:
+                item = db.get(MediaItem, iid)
+                if item is None:
+                    continue
+                try:
+                    tmdb_updated += await fetch_tmdb_artwork_async(item, db, cfg)
+                except Exception as exc:
+                    log.warning("fetch_artwork tmdb_only item=%d: %s", iid, exc)
+        total_updated += tmdb_updated
+
+        kodi_count = len(item_ids)
+        tmdb_count = len(tmdb_only_ids)
+        return (
+            f"{kodi_count} Kodi items + {tmdb_count} TMDB-only items scanned, "
+            f"{total_updated} artwork rows updated"
+        )
     finally:
         kodi_conn.close()
         if rpc:
