@@ -20,12 +20,13 @@ export const Route = createFileRoute('/movies')({
 })
 
 const LIMIT = 50
-type FilterTab = 'history' | 'all' | 'unwatched'
+type FilterTab = 'history' | 'all' | 'unwatched' | 'former'
 
 const FILTER_TABS: { value: FilterTab; label: string }[] = [
-  { value: 'history', label: 'Watched' },
-  { value: 'all',     label: 'All' },
+  { value: 'history',  label: 'Watched' },
+  { value: 'all',      label: 'All' },
   { value: 'unwatched', label: 'Unwatched' },
+  { value: 'former',   label: 'Former Library' },
 ]
 
 function MoviesPage() {
@@ -132,6 +133,7 @@ function MoviesPage() {
               <MovieCard
                 key={movie.id}
                 movie={movie}
+                showFormerBadge={filter === 'former'}
                 onClick={() => navigate({ to: '/items/$itemId', params: { itemId: String(movie.id) } })}
               />
             ))}
@@ -167,7 +169,8 @@ function MoviesPage() {
   )
 }
 
-function MovieCard({ movie, onClick }: { movie: MovieSummaryOut; onClick: () => void }) {
+function MovieCard({ movie, showFormerBadge, onClick }: { movie: MovieSummaryOut; showFormerBadge?: boolean; onClick: () => void }) {
+  const formerLabel = movie.kodi_state === 'removed' ? 'Removed' : 'Manual'
   return (
     <button
       className="group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg"
@@ -180,6 +183,14 @@ function MovieCard({ movie, onClick }: { movie: MovieSummaryOut; onClick: () => 
           alt={movie.title}
           className="w-full h-full transition-transform group-hover:scale-105"
         />
+        {/* Former Library badge */}
+        {showFormerBadge && (
+          <div className="absolute top-1.5 left-1.5">
+            <Badge variant="secondary" className="text-xs px-1.5 py-0.5 bg-zinc-700 text-zinc-300 border-0">
+              {formerLabel}
+            </Badge>
+          </div>
+        )}
         {/* Session count badge */}
         {movie.total_sessions > 1 && (
           <div className="absolute top-1.5 right-1.5">

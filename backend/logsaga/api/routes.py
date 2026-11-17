@@ -14,7 +14,7 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from logsaga.api.deps import get_cfg, get_db, get_tmdb_client, get_tmdb_client_optional
@@ -491,6 +491,7 @@ def get_shows(
     filter=history (default): shows with at least one watch session
     filter=all: entire Kodi show library
     filter=unwatched: shows with no completed session
+    filter=former: removed from Kodi or manual show stubs (kodi_idShow IS NULL)
     """
     has_session_sq = (
         db.query(MediaItem.show_id)
@@ -502,16 +503,26 @@ def get_shows(
         .distinct()
     )
 
-    shows_q = db.query(KodiShow).filter(KodiShow.kodi_state != KodiState.removed)
-
-    if filter == "history":
-        shows_q = shows_q.filter(KodiShow.id.in_(has_session_sq))
-    elif filter == "unwatched":
-        shows_q = shows_q.filter(
-            KodiShow.id.notin_(has_session_sq),
-            KodiShow.kodi_state == KodiState.unwatched,
+    if filter == "former":
+        shows_q = db.query(KodiShow).filter(
+            or_(
+                KodiShow.kodi_state == KodiState.removed,
+                KodiShow.kodi_idShow.is_(None),
+            )
         )
-    # filter == "all": no extra filter beyond excluding removed
+    else:
+        shows_q = db.query(KodiShow).filter(
+            KodiShow.kodi_state != KodiState.removed,
+            KodiShow.kodi_idShow.isnot(None),
+        )
+        if filter == "history":
+            shows_q = shows_q.filter(KodiShow.id.in_(has_session_sq))
+        elif filter == "unwatched":
+            shows_q = shows_q.filter(
+                KodiShow.id.notin_(has_session_sq),
+                KodiShow.kodi_state == KodiState.unwatched,
+            )
+        # filter == "all": no extra filter beyond excluding removed/manual
 
     if search:
         shows_q = shows_q.filter(KodiShow.title.ilike(f"%{search}%"))
@@ -1341,6 +1352,7 @@ def get_movies(
     filter=history (default): movies with at least one non-ignored session
     filter=all: entire Kodi movie library (watched + unwatched)
     filter=unwatched: movies with no completed session and kodi_state=unwatched
+    filter=former: removed from Kodi or manual imports (kodi_media_id IS NULL)
     """
     has_session_sq = (
         db.query(WatchSession.media_item_id)
@@ -1354,14 +1366,27 @@ def get_movies(
         .filter(MediaItem.media_type == "movie")
     )
 
-    if filter == "history":
-        base = base.filter(MediaItem.id.in_(has_session_sq))
-    elif filter == "unwatched":
+    if filter == "former":
         base = base.filter(
-            MediaItem.kodi_state == KodiState.unwatched,
-            MediaItem.id.notin_(has_session_sq),
+            or_(
+                MediaItem.kodi_state == KodiState.removed,
+                MediaItem.kodi_media_id.is_(None),
+            )
         )
-    # filter == "all": no extra filter
+    else:
+        # Exclude removed items and manual imports from all non-former tabs
+        base = base.filter(
+            MediaItem.kodi_state != KodiState.removed,
+            MediaItem.kodi_media_id.isnot(None),
+        )
+        if filter == "history":
+            base = base.filter(MediaItem.id.in_(has_session_sq))
+        elif filter == "unwatched":
+            base = base.filter(
+                MediaItem.kodi_state == KodiState.unwatched,
+                MediaItem.id.notin_(has_session_sq),
+            )
+        # filter == "all": no extra filter beyond excluding removed/manual
 
     if search:
         base = base.filter(MediaItem.title.ilike(f"%{search}%"))

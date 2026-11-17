@@ -8,19 +8,21 @@ import { ErrorState } from '@/components/shared/ErrorState'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { LoadingSkeleton } from '@/components/shared/LoadingSkeleton'
 import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { formatEpisode } from '@/lib/format'
 
 export const Route = createFileRoute('/shows')({
   component: ShowsPage,
 })
 
-type FilterTab = 'history' | 'all' | 'unwatched'
+type FilterTab = 'history' | 'all' | 'unwatched' | 'former'
 type SortOption = 'title' | 'activity' | 'added'
 
 const FILTER_TABS: { value: FilterTab; label: string }[] = [
   { value: 'history',   label: 'Watched' },
   { value: 'all',       label: 'All' },
   { value: 'unwatched', label: 'Unwatched' },
+  { value: 'former',    label: 'Former Library' },
 ]
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
@@ -108,6 +110,7 @@ function ShowsPage() {
             const pct = show.total_episodes > 0
               ? (show.watched_episodes / show.total_episodes) * 100
               : 0
+            const formerLabel = show.kodi_state === 'removed' ? 'Removed' : 'Manual'
             return (
               <div
                 key={show.show_id}
@@ -126,6 +129,14 @@ function ShowsPage() {
                     className="w-full h-full"
                     fallbackLetter={show.show_title[0]}
                   />
+                  {/* Former Library badge */}
+                  {filter === 'former' && (
+                    <div className="absolute top-1.5 left-1.5">
+                      <Badge variant="secondary" className="text-xs px-1.5 py-0.5 bg-zinc-700 text-zinc-300 border-0">
+                        {formerLabel}
+                      </Badge>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm font-medium line-clamp-1 group-hover:text-primary transition-colors">

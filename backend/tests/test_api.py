@@ -85,13 +85,23 @@ def _now() -> datetime:
     return datetime(2026, 11, 4, 12, 0, 0)
 
 
-def _make_movie(db: Session, title="Test Movie", kodi_state=KodiState.watched) -> MediaItem:
+_movie_id_counter = 1000
+
+def _make_movie(db: Session, title="Test Movie", kodi_state=KodiState.watched, kodi_media_id: int | None = None) -> MediaItem:
+    global _movie_id_counter
+    if kodi_media_id is None:
+        # Default to a unique synthetic Kodi file ID so the item is treated as
+        # Kodi-backed (not a manual import) by the filter=all/history/unwatched
+        # exclusion guard.
+        _movie_id_counter += 1
+        kodi_media_id = _movie_id_counter
     item = MediaItem(
         media_type="movie",
         title=title,
         year=2020,
         runtime_s=5400,
         kodi_state=kodi_state,
+        kodi_media_id=kodi_media_id,
         created_at=_now(),
         updated_at=_now(),
     )
