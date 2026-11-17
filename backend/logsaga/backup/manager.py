@@ -167,6 +167,8 @@ def create_backup(db_path: str, app_version: str = "dev") -> BackupInfo:
                     conn.execute(f"DELETE FROM {table}")  # noqa: S608 — table names are constants
                 except sqlite3.OperationalError:
                     pass  # table doesn't exist in this schema version
+        # VACUUM cannot run inside a transaction; use a fresh autocommit connection
+        with sqlite3.connect(str(tmp_db), isolation_level=None) as conn:
             conn.execute("VACUUM")
 
         # --- Write meta.json ---
@@ -355,6 +357,8 @@ def make_stripped_copy(zip_path: Path) -> Path:
                     f"DELETE FROM settings WHERE key IN ({placeholders})",  # noqa: S608
                     list(CREDENTIAL_KEYS),
                 )
+            # VACUUM cannot run inside a transaction; use a fresh autocommit connection
+            with sqlite3.connect(str(tmp_db), isolation_level=None) as conn:
                 conn.execute("VACUUM")
 
             # Update meta.json to reflect stripping
