@@ -628,9 +628,13 @@ async def _fill_missing_artwork_bg(app: FastAPI) -> None:
                     item = db.get(MediaItem, iid)
                     if item is None:
                         continue
-                    count = fetch_artwork_for_item(item, conn, rpc, db, cfg)
-                    db.commit()
-                    total += count
+                    try:
+                        count = fetch_artwork_for_item(item, conn, rpc, db, cfg)
+                        db.commit()
+                        total += count
+                    except Exception as exc:
+                        db.rollback()
+                        logger.warning("auto_artwork_item_failed", item_id=iid, error=str(exc))
         finally:
             conn.close()
             if rpc:

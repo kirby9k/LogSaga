@@ -148,6 +148,20 @@ def _upsert_artwork(
         .filter_by(media_item_id=media_item_id, art_type=art_type)
         .first()
     )
+
+    # With autoflush=False sessions, a pending db.add() in the same session is not
+    # visible to the query above.  Check db.new so we don't create a duplicate row.
+    if row is None:
+        row = next(
+            (
+                obj for obj in db.new
+                if isinstance(obj, Artwork)
+                and obj.media_item_id == media_item_id
+                and obj.art_type == art_type
+            ),
+            None,
+        )
+
     now = _now_utc()
     if row is None:
         row = Artwork(
