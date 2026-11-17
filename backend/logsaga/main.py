@@ -906,6 +906,10 @@ async def _library_sync_loop(app: FastAPI) -> None:
 
     while True:
         cfg = app.state.settings  # re-read on each iteration (picks up hot-reloaded config)
+        # Pause during a restore so the DB file is not held open during the swap.
+        if getattr(app.state, "restore_in_progress", False):
+            await asyncio.sleep(1)
+            continue
         interval_s = int(cfg.library_sync_hours * 3600)
         try:
             async with app.state.library_sync_lock:
@@ -966,6 +970,10 @@ async def _poll_loop(app: FastAPI) -> None:
 
     while True:
         cfg = app.state.settings  # re-read on each iteration (picks up hot-reloaded config)
+        # Pause during a restore so the DB file is not held open during the swap.
+        if getattr(app.state, "restore_in_progress", False):
+            await asyncio.sleep(1)
+            continue
         try:
             await asyncio.sleep(cfg.poll_seconds)
             connected = await asyncio.to_thread(_ensure_kodi_conn, kodi, cfg)
@@ -1052,6 +1060,10 @@ async def lifespan(app: FastAPI):
     # from the poll loop when the file count changes.
     app.state.library_sync_requested = asyncio.Event()
     app.state.library_sync_lock = asyncio.Lock()
+
+    # Set to True during a restore operation so background loops skip their
+    # iteration and don't hold database connections during the DB file swap.
+    app.state.restore_in_progress = False
 
     # Kodi connection state — stored on app.state so the config API can reset
     # .conn to force a reconnect when credentials change.

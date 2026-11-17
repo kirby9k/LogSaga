@@ -16,6 +16,7 @@ dependencies = [
     "aiomqtt>=2.3",
     "structlog>=24.4",
     "typer>=0.15",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]

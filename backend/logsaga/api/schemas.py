@@ -329,6 +329,38 @@ class MovieListOut(BaseModel):
 # ---------------------------------------------------------------------------
 # Admin
 # ---------------------------------------------------------------------------
+class BackupInfoOut(BaseModel):
+    filename: str
+    size_bytes: int
+    created_at: str              # ISO 8601 UTC
+    sessions: Optional[int] = None
+    media_items: Optional[int] = None
+    shows: Optional[int] = None
+    schema_version: Optional[str] = None
+
+
+class BackupListOut(BaseModel):
+    backups: list[BackupInfoOut]
+    backup_dir: str
+
+
+class VerifyResultOut(BaseModel):
+    ok: bool
+    error: Optional[str] = None
+    schema_version: Optional[str] = None
+    app_compatible: bool = False
+    sessions: Optional[int] = None
+    media_items: Optional[int] = None
+    shows: Optional[int] = None
+    created_at: Optional[str] = None
+    credentials_stripped: bool = False
+
+
+class RestoreResultOut(BaseModel):
+    success: bool
+    message: str
+
+
 class ArtworkStatusOut(BaseModel):
     total_items: int
     items_with_artwork: int

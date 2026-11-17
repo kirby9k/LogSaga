@@ -77,6 +77,10 @@ from logsaga.api.schemas import (
     TMDBSeasonOut,
     TMDBSeasonSummaryOut,
     TMDBTVOut,
+    BackupInfoOut,
+    BackupListOut,
+    RestoreResultOut,
+    VerifyResultOut,
 )
 from logsaga.config import Settings
 from logsaga.models import (
@@ -3557,3 +3561,281 @@ async def update_config_app(
     )
 
     return ConnectionTestOut(status="ok", message="Settings saved.")
+
+
+# ---------------------------------------------------------------------------
+# Backup / Restore / Verify
+# ---------------------------------------------------------------------------
+from fastapi import UploadFile, File as _File, BackgroundTasks  # noqa: E402
+from fastapi.responses import FileResponse as _FileResponse      # noqa: E402
+import os as _os                                                  # noqa: E402
+import tempfile as _tempfile                                      # noqa: E402
+from pathlib import Path as _Path                                 # noqa: E402
+from sqlalchemy import create_engine as _create_engine           # noqa: E402
+
+
+def _resolve_backup_zip(
+    filename: Optional[str],
+    upload: Optional[UploadFile],
+    cfg: Settings,
+) -> _Path:
+    """
+    Return a Path to the backup ZIP to operate on.
+
+    If `upload` is provided, writes it to a temp file and returns that path.
+    If `filename` is provided, resolves it against the backup directory.
+    Raises HTTPException 400 if neither is provided or the file is not found.
+    """
+    from logsaga.backup.manager import backup_dir as _backup_dir
+
+    if upload is not None:
+        # Write the uploaded file to a temp location
+        import shutil as _shutil
+        fd, tmp_path = _tempfile.mkstemp(suffix=".zip", prefix="logsaga-upload-")
+        try:
+            with _os.fdopen(fd, "wb") as f:
+                _shutil.copyfileobj(upload.file, f)
+        except Exception:
+            _os.unlink(tmp_path)
+            raise
+        return _Path(tmp_path)
+
+    if filename:
+        safe_name = _Path(filename).name  # strip any path components
+        zip_path = _Path(_backup_dir(cfg.logsaga_db_path)) / safe_name
+        if not zip_path.exists():
+            raise HTTPException(status_code=404, detail=f"Backup not found: {safe_name}")
+        return zip_path
+
+    raise HTTPException(status_code=400, detail="Provide either 'file' upload or 'filename' query param")
+
+
+@router.get("/admin/backup", response_model=BackupListOut)
+def list_backups_route(
+    cfg: Settings = Depends(get_cfg),
+) -> BackupListOut:
+    """List all backup ZIPs stored on the server, newest first."""
+    from logsaga.backup.manager import list_backups as _list_backups, backup_dir as _backup_dir
+
+    backups = _list_backups(cfg.logsaga_db_path)
+    bdir = str(_backup_dir(cfg.logsaga_db_path))
+    return BackupListOut(
+        backup_dir=bdir,
+        backups=[
+            BackupInfoOut(
+                filename=b.filename,
+                size_bytes=b.size_bytes,
+                created_at=b.created_at,
+                sessions=b.sessions,
+                media_items=b.media_items,
+                shows=b.shows,
+                schema_version=b.schema_version,
+            )
+            for b in backups
+        ],
+    )
+
+
+@router.post("/admin/backup", response_model=BackupInfoOut)
+def create_backup_route(
+    cfg: Settings = Depends(get_cfg),
+) -> BackupInfoOut:
+    """Create a new backup of the current database and store it on the server."""
+    from logsaga.backup.manager import create_backup as _create_backup
+
+    try:
+        info = _create_backup(cfg.logsaga_db_path, app_version=cfg.build_version)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}")
+
+    return BackupInfoOut(
+        filename=info.filename,
+        size_bytes=info.size_bytes,
+        created_at=info.created_at,
+        sessions=info.sessions,
+        media_items=info.media_items,
+        shows=info.shows,
+        schema_version=info.schema_version,
+    )
+
+
+@router.get("/admin/backup/{filename}/download")
+def download_backup_route(
+    filename: str,
+    background_tasks: BackgroundTasks,
+    cfg: Settings = Depends(get_cfg),
+) -> _FileResponse:
+    """
+    Download a backup ZIP with credential keys stripped from the settings table.
+    The stripped copy is a temporary file deleted after the response is sent.
+    """
+    from logsaga.backup.manager import backup_dir as _backup_dir, make_stripped_copy
+
+    safe_name = _Path(filename).name
+    zip_path = _Path(_backup_dir(cfg.logsaga_db_path)) / safe_name
+    if not zip_path.exists():
+        raise HTTPException(status_code=404, detail=f"Backup not found: {safe_name}")
+
+    try:
+        tmp_path = make_stripped_copy(zip_path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to prepare download: {exc}")
+
+    # Clean up temp file after the response is fully sent
+    background_tasks.add_task(_os.unlink, str(tmp_path))
+
+    return _FileResponse(
+        path=str(tmp_path),
+        filename=safe_name,
+        media_type="application/zip",
+    )
+
+
+@router.post("/admin/backup/verify", response_model=VerifyResultOut)
+async def verify_backup_route(
+    file: Optional[UploadFile] = _File(None),
+    filename: Optional[str] = Query(None),
+    cfg: Settings = Depends(get_cfg),
+) -> VerifyResultOut:
+    """
+    Verify a backup ZIP without modifying anything.
+
+    Accepts either a multipart file upload or a ?filename= param pointing to
+    a server-side backup.
+    """
+    from logsaga.backup.manager import verify_backup as _verify_backup
+
+    is_upload = file is not None
+    zip_path = _resolve_backup_zip(filename, file, cfg)
+
+    try:
+        # Get current schema version from live DB
+        import sqlite3 as _sqlite3
+        try:
+            with _sqlite3.connect(cfg.logsaga_db_path) as conn:
+                row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+                current_schema = row[0] if row else ""
+        except Exception:
+            current_schema = ""
+
+        result = _verify_backup(zip_path, current_schema)
+    finally:
+        if is_upload:
+            zip_path.unlink(missing_ok=True)
+
+    return VerifyResultOut(
+        ok=result.ok,
+        error=result.error,
+        schema_version=result.schema_version,
+        app_compatible=result.app_compatible,
+        sessions=result.sessions,
+        media_items=result.media_items,
+        shows=result.shows,
+        created_at=result.created_at,
+        credentials_stripped=result.credentials_stripped,
+    )
+
+
+@router.post("/admin/backup/restore", response_model=RestoreResultOut)
+async def restore_backup_route(
+    request: Request,
+    file: Optional[UploadFile] = _File(None),
+    filename: Optional[str] = Query(None),
+    cfg: Settings = Depends(get_cfg),
+) -> RestoreResultOut:
+    """
+    Restore the database from a backup ZIP.
+
+    Full overwrite — all current data is replaced. The SQLAlchemy engine is
+    swapped atomically so in-flight requests complete cleanly before the new
+    DB takes effect.
+
+    Accepts either a multipart file upload or a ?filename= param.
+    """
+    from logsaga.backup.manager import verify_backup as _verify_backup, restore_from_zip
+
+    is_upload = file is not None
+    zip_path = _resolve_backup_zip(filename, file, cfg)
+
+    try:
+        # Validate before we touch anything
+        import sqlite3 as _sqlite3
+        try:
+            with _sqlite3.connect(cfg.logsaga_db_path) as conn:
+                row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+                current_schema = row[0] if row else ""
+        except Exception:
+            current_schema = ""
+
+        verify = _verify_backup(zip_path, current_schema)
+        if not verify.ok:
+            return RestoreResultOut(success=False, message=f"Backup failed verification: {verify.error}")
+        if not verify.app_compatible:
+            return RestoreResultOut(
+                success=False,
+                message=(
+                    f"Schema mismatch: backup has schema {verify.schema_version!r}, "
+                    f"app is on {current_schema!r}. Cannot restore."
+                ),
+            )
+
+        # Pause background loops
+        request.app.state.restore_in_progress = True
+        try:
+            # Give in-flight loop iterations a moment to yield
+            await asyncio.sleep(0.5)
+
+            # Dispose engine (closes idle connections; active ones finish naturally)
+            old_engine = request.app.state.engine
+            old_engine.dispose()
+
+            # Atomic file swap
+            restore_from_zip(zip_path, cfg.logsaga_db_path)
+
+            # Recreate engine on the new file
+            from sqlalchemy import create_engine as _ce
+            new_engine = _ce(
+                f"sqlite:///{cfg.logsaga_db_path}",
+                connect_args={"check_same_thread": False},
+                pool_pre_ping=True,
+            )
+            request.app.state.engine = new_engine
+
+            # Reload settings from restored DB (may have different config)
+            from logsaga.main import _load_effective_settings
+            new_cfg = _load_effective_settings(cfg, new_engine)
+            request.app.state.settings = new_cfg
+
+        finally:
+            request.app.state.restore_in_progress = False
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return RestoreResultOut(success=False, message=f"Restore failed: {exc}")
+    finally:
+        if is_upload:
+            zip_path.unlink(missing_ok=True)
+
+    return RestoreResultOut(
+        success=True,
+        message="Restore complete. The database has been replaced with the backup.",
+    )
+
+
+@router.delete("/admin/backup/{filename}", status_code=204)
+def delete_backup_route(
+    filename: str,
+    cfg: Settings = Depends(get_cfg),
+) -> None:
+    """Delete a backup ZIP from the server."""
+    from logsaga.backup.manager import backup_dir as _backup_dir
+
+    safe_name = _Path(filename).name
+    zip_path = _Path(_backup_dir(cfg.logsaga_db_path)) / safe_name
+    if not zip_path.exists():
+        raise HTTPException(status_code=404, detail=f"Backup not found: {safe_name}")
+    try:
+        zip_path.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete backup: {exc}")

@@ -13,6 +13,7 @@ export const QK = {
   health: ['health'] as const,
   artworkStatus: ['artworkStatus'] as const,
   castStatus: ['castStatus'] as const,
+  backupList: ['backupList'] as const,
   recent: (params: RecentParams) => ['recent', params] as const,
   sessions: (params: SessionsParams) => ['sessions', params] as const,
   inProgress: ['inProgress'] as const,
@@ -783,5 +784,145 @@ export function useUpdateConfigApp() {
       return assertOk(data as unknown as ConnectionTestResult, error)
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminConfig'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Backup / Restore / Verify types
+// ---------------------------------------------------------------------------
+export interface BackupInfoOut {
+  filename: string
+  size_bytes: number
+  created_at: string
+  sessions?: number | null
+  media_items?: number | null
+  shows?: number | null
+  schema_version?: string | null
+}
+
+export interface BackupListOut {
+  backups: BackupInfoOut[]
+  backup_dir: string
+}
+
+export interface VerifyResultOut {
+  ok: boolean
+  error?: string | null
+  schema_version?: string | null
+  app_compatible: boolean
+  sessions?: number | null
+  media_items?: number | null
+  shows?: number | null
+  created_at?: string | null
+  credentials_stripped: boolean
+}
+
+export interface RestoreResultOut {
+  success: boolean
+  message: string
+}
+
+/** A backup to operate on: either a server-side filename or a user-uploaded File. */
+export type BackupTarget = { file: File } | { filename: string }
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/backup  — list server-side backups
+// ---------------------------------------------------------------------------
+export function useBackupList() {
+  return useQuery({
+    queryKey: QK.backupList,
+    queryFn: async (): Promise<BackupListOut> => {
+      const response = await fetch('/api/admin/backup')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return response.json()
+    },
+    staleTime: 30_000,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/backup  — create a new server-side backup
+// ---------------------------------------------------------------------------
+export function useCreateBackup() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (): Promise<BackupInfoOut> => {
+      const response = await fetch('/api/admin/backup', { method: 'POST' })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `HTTP ${response.status}`)
+      }
+      return response.json()
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: QK.backupList }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/backup/verify  — verify integrity + schema compatibility
+// Accepts either a File upload or a server-side filename.
+// ---------------------------------------------------------------------------
+export function useVerifyBackup() {
+  return useMutation({
+    mutationFn: async (target: BackupTarget): Promise<VerifyResultOut> => {
+      let response: Response
+      if ('file' in target) {
+        const fd = new FormData()
+        fd.append('file', target.file)
+        response = await fetch('/api/admin/backup/verify', { method: 'POST', body: fd })
+      } else {
+        const url = `/api/admin/backup/verify?filename=${encodeURIComponent(target.filename)}`
+        response = await fetch(url, { method: 'POST' })
+      }
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `HTTP ${response.status}`)
+      }
+      return response.json()
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/backup/restore  — restore the database from a backup
+// Accepts either a File upload or a server-side filename.
+// ---------------------------------------------------------------------------
+export function useRestoreBackup() {
+  return useMutation({
+    mutationFn: async (target: BackupTarget): Promise<RestoreResultOut> => {
+      let response: Response
+      if ('file' in target) {
+        const fd = new FormData()
+        fd.append('file', target.file)
+        response = await fetch('/api/admin/backup/restore', { method: 'POST', body: fd })
+      } else {
+        const url = `/api/admin/backup/restore?filename=${encodeURIComponent(target.filename)}`
+        response = await fetch(url, { method: 'POST' })
+      }
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `HTTP ${response.status}`)
+      }
+      return response.json()
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/admin/backup/{filename}
+// ---------------------------------------------------------------------------
+export function useDeleteBackup() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (filename: string): Promise<void> => {
+      const response = await fetch(`/api/admin/backup/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `HTTP ${response.status}`)
+      }
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: QK.backupList }),
   })
 }

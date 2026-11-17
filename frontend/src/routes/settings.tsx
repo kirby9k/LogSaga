@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import {
   useHealth,
@@ -9,8 +9,16 @@ import {
   useUpdateSettings,
   useJobs,
   useTriggerJob,
+  useBackupList,
+  useCreateBackup,
+  useVerifyBackup,
+  useRestoreBackup,
+  useDeleteBackup,
   type AdminSettings,
   type JobState,
+  type BackupInfoOut,
+  type VerifyResultOut,
+  type BackupTarget,
 } from '@/api/queries'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { TimeAgo } from '@/components/shared/TimeAgo'
@@ -20,7 +28,13 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
-import { CheckCircle2, AlertCircle, XCircle, RefreshCw, Save, Play } from 'lucide-react'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  CheckCircle2, AlertCircle, XCircle, RefreshCw, Save, Play,
+  Archive, Download, ShieldCheck, RotateCcw, Trash2, Plus,
+} from 'lucide-react'
 
 export const Route = createFileRoute('/settings')({
   component: SettingsPage,
@@ -300,6 +314,9 @@ function SettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Backup & Restore card */}
+      <BackupCard />
     </div>
   )
 }
@@ -372,6 +389,358 @@ function JobRow({
   )
 }
 
+// ---------------------------------------------------------------------------
+// BackupCard — Backup & Restore section
+// ---------------------------------------------------------------------------
+function BackupCard() {
+  const { data: backupList, isLoading, refetch } = useBackupList()
+  const createBackup = useCreateBackup()
+  const deleteBackup = useDeleteBackup()
+  const verifyMutation = useVerifyBackup()
+  const restoreMutation = useRestoreBackup()
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [verifyResult, setVerifyResult] = useState<VerifyResultOut | null>(null)
+  // Which backup was most recently verified (filename or "upload") — for spinner targeting
+  const [verifyTarget, setVerifyTarget] = useState<string | null>(null)
+  const [confirmRestore, setConfirmRestore] = useState<{ target: BackupTarget; label: string } | null>(null)
+  const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const handleCreate = () => {
+    setStatusMsg(null)
+    createBackup.mutate(undefined, {
+      onSuccess: (info) => {
+        setStatusMsg({ type: 'success', text: `Backup created: ${info.filename}` })
+        refetch()
+      },
+      onError: (err) => setStatusMsg({ type: 'error', text: `Create failed: ${(err as Error).message}` }),
+    })
+  }
+
+  const handleVerify = (target: BackupTarget, label: string) => {
+    setVerifyResult(null)
+    setVerifyTarget(label)
+    setStatusMsg(null)
+    verifyMutation.mutate(target, {
+      onSuccess: (result) => setVerifyResult(result),
+      onError: (err) => setStatusMsg({ type: 'error', text: `Verify failed: ${(err as Error).message}` }),
+    })
+  }
+
+  const handleRestore = (target: BackupTarget, label: string) => {
+    setConfirmRestore({ target, label })
+  }
+
+  const confirmDoRestore = () => {
+    if (!confirmRestore) return
+    setConfirmRestore(null)
+    setStatusMsg(null)
+    restoreMutation.mutate(confirmRestore.target, {
+      onSuccess: () => {
+        setStatusMsg({ type: 'success', text: 'Restore complete — reloading…' })
+        setTimeout(() => window.location.reload(), 2000)
+      },
+      onError: (err) => setStatusMsg({ type: 'error', text: `Restore failed: ${(err as Error).message}` }),
+    })
+  }
+
+  const handleDelete = (filename: string) => {
+    setStatusMsg(null)
+    deleteBackup.mutate(filename, {
+      onError: (err) => setStatusMsg({ type: 'error', text: `Delete failed: ${(err as Error).message}` }),
+    })
+  }
+
+  return (
+    <>
+      <Card className="mb-4">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Archive size={15} />
+              Backup &amp; Restore
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 shrink-0"
+              disabled={createBackup.isPending}
+              onClick={handleCreate}
+            >
+              {createBackup.isPending
+                ? <><RefreshCw size={12} className="animate-spin" /> Creating…</>
+                : <><Plus size={12} /> Create Backup</>
+              }
+            </Button>
+          </div>
+          <CardDescription className="text-xs mt-1">
+            Server backups are stored next to the database in a <code className="font-mono">backups/</code> folder.
+            Downloads have passwords removed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* Status / error message */}
+          {statusMsg && (
+            <p className={`text-xs ${statusMsg.type === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+              {statusMsg.text}
+            </p>
+          )}
+
+          {/* Server backup list */}
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : !backupList || backupList.backups.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No backups yet — click Create Backup to get started.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                Server Backups
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Stored in: <code className="font-mono text-xs">{backupList.backup_dir}</code>
+              </p>
+              <div className="mt-2">
+                {backupList.backups.map(b => (
+                  <BackupRow
+                    key={b.filename}
+                    backup={b}
+                    onVerify={() => handleVerify({ filename: b.filename }, b.filename)}
+                    onRestore={() => handleRestore({ filename: b.filename }, b.filename)}
+                    onDelete={() => handleDelete(b.filename)}
+                    isVerifying={verifyMutation.isPending && verifyTarget === b.filename}
+                    isRestoring={restoreMutation.isPending}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Upload section */}
+          <div className="space-y-2 pt-2 border-t">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+              Upload a Backup
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".zip"
+              className="hidden"
+              onChange={e => {
+                setSelectedFile(e.target.files?.[0] ?? null)
+                setVerifyResult(null)
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Choose .zip file
+              </Button>
+              {selectedFile && (
+                <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                  {selectedFile.name}
+                </span>
+              )}
+            </div>
+            {selectedFile && (
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={verifyMutation.isPending}
+                  onClick={() => handleVerify({ file: selectedFile }, 'upload')}
+                >
+                  {verifyMutation.isPending && verifyTarget === 'upload'
+                    ? <><RefreshCw size={12} className="animate-spin" /> Verifying…</>
+                    : <><ShieldCheck size={12} /> Verify</>
+                  }
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={restoreMutation.isPending}
+                  onClick={() => handleRestore({ file: selectedFile }, selectedFile.name)}
+                >
+                  <RotateCcw size={12} className="mr-1" />
+                  Restore
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Verify result panel */}
+          {verifyResult && (
+            <div className={`rounded-md border p-3 space-y-1.5 text-sm ${
+              verifyResult.ok
+                ? 'border-green-500/30 bg-green-500/5'
+                : 'border-destructive/30 bg-destructive/5'
+            }`}>
+              <div className="flex items-center gap-2">
+                {verifyResult.ok
+                  ? <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                  : <XCircle size={14} className="text-destructive shrink-0" />
+                }
+                <span className="font-medium text-xs">
+                  {verifyResult.ok ? 'Backup OK' : `Verification failed: ${verifyResult.error}`}
+                </span>
+              </div>
+              {verifyResult.ok && (
+                <>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {verifyResult.app_compatible
+                      ? <Badge variant="default" className="text-xs">Schema compatible</Badge>
+                      : <Badge variant="destructive" className="text-xs">Schema mismatch — cannot restore safely</Badge>
+                    }
+                    {verifyResult.schema_version && (
+                      <span className="text-xs text-muted-foreground font-mono">{verifyResult.schema_version}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {[
+                      verifyResult.sessions != null && `${verifyResult.sessions.toLocaleString()} sessions`,
+                      verifyResult.media_items != null && `${verifyResult.media_items.toLocaleString()} items`,
+                      verifyResult.shows != null && `${verifyResult.shows.toLocaleString()} shows`,
+                    ].filter(Boolean).join(' · ')}
+                  </p>
+                  {verifyResult.credentials_stripped && (
+                    <p className="text-xs text-muted-foreground">
+                      Passwords not included in this file (stripped before download).
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+        </CardContent>
+      </Card>
+
+      {/* Restore confirmation dialog */}
+      <Dialog open={confirmRestore !== null} onOpenChange={open => { if (!open) setConfirmRestore(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Restore</DialogTitle>
+            <DialogDescription>
+              This will permanently replace <strong>all current data</strong> with the contents
+              of this backup. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {confirmRestore && (
+            <p className="text-sm text-muted-foreground font-mono break-all">{confirmRestore.label}</p>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setConfirmRestore(null)}
+              disabled={restoreMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={restoreMutation.isPending}
+              onClick={confirmDoRestore}
+            >
+              {restoreMutation.isPending
+                ? <><RefreshCw size={12} className="animate-spin mr-1" /> Restoring…</>
+                : 'Restore — this cannot be undone'
+              }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// BackupRow — one row in the server backups list
+// ---------------------------------------------------------------------------
+function BackupRow({
+  backup,
+  onVerify,
+  onRestore,
+  onDelete,
+  isVerifying,
+  isRestoring,
+}: {
+  backup: BackupInfoOut
+  onVerify: () => void
+  onRestore: () => void
+  onDelete: () => void
+  isVerifying: boolean
+  isRestoring: boolean
+}) {
+  const dateStr = backup.created_at
+    ? new Date(backup.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : '—'
+  const sizeStr = formatBytes(backup.size_bytes)
+
+  return (
+    <div className="flex items-start gap-2 py-2 border-b last:border-0">
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <p className="text-xs font-mono truncate">{backup.filename}</p>
+        <p className="text-xs text-muted-foreground">
+          {dateStr} · {sizeStr}
+          {backup.sessions != null && ` · ${backup.sessions.toLocaleString()} sessions`}
+        </p>
+      </div>
+      <div className="flex items-center gap-0.5 shrink-0">
+        {/* Download — anchor tag so browser handles the file download */}
+        <a
+          href={`/api/admin/backup/${encodeURIComponent(backup.filename)}/download`}
+          download
+          title="Download (passwords removed)"
+        >
+          <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+            <Download size={12} />
+          </Button>
+        </a>
+        <Button
+          size="sm" variant="ghost" className="h-7 w-7 p-0"
+          onClick={onVerify} disabled={isVerifying}
+          title="Verify backup integrity"
+        >
+          {isVerifying
+            ? <RefreshCw size={12} className="animate-spin" />
+            : <ShieldCheck size={12} />
+          }
+        </Button>
+        <Button
+          size="sm" variant="ghost" className="h-7 w-7 p-0"
+          onClick={onRestore} disabled={isRestoring}
+          title="Restore from this backup"
+        >
+          <RotateCcw size={12} />
+        </Button>
+        <Button
+          size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+          onClick={onDelete}
+          title="Delete backup"
+        >
+          <Trash2 size={12} />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+// ---------------------------------------------------------------------------
+// Row — generic label/value layout row used throughout this page
+// ---------------------------------------------------------------------------
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4">

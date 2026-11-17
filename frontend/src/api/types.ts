@@ -745,5 +745,38 @@ export interface components {
       movie_plays: number;
       episode_plays: number;
     };
+
+    // --- Backup / Restore ---
+    BackupInfoOut: {
+      filename: string;
+      size_bytes: number;
+      created_at: string;
+      sessions?: number | null;
+      media_items?: number | null;
+      shows?: number | null;
+      schema_version?: string | null;
+    };
+
+    BackupListOut: {
+      backups: components["schemas"]["BackupInfoOut"][];
+      backup_dir: string;
+    };
+
+    VerifyResultOut: {
+      ok: boolean;
+      error?: string | null;
+      schema_version?: string | null;
+      app_compatible: boolean;
+      sessions?: number | null;
+      media_items?: number | null;
+      shows?: number | null;
+      created_at?: string | null;
+      credentials_stripped: boolean;
+    };
+
+    RestoreResultOut: {
+      success: boolean;
+      message: string;
+    };
   };
 }
