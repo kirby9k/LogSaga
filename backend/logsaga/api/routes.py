@@ -1746,7 +1746,7 @@ async def recover_missing_artwork(
         await _fill_missing_artwork_bg(request.app)
         return f"Recovery complete: reset {n} stuck rows"
 
-    asyncio.create_task(_run_job("fetch_artwork", _do_recover))
+    asyncio.create_task(_run_job("fetch_artwork", _do_recover()))
     return {"message": "Artwork recovery started"}
 
 
