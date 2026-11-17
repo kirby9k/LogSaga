@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import os
 from contextlib import asynccontextmanager, suppress
 
@@ -1030,12 +1031,56 @@ async def _poll_loop(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     cfg = get_settings()
 
-    # Configure structlog
-    import structlog
+    # ---------------------------------------------------------------------------
+    # Logging: human-readable lines to stdout + rotating file at /config/logsaga.log
+    # ---------------------------------------------------------------------------
+    _log_level = getattr(logging, cfg.log_level, logging.INFO)
+
+    def _fmt_log(_, method: str, event_dict: dict) -> str:
+        """Format a structlog event as a readable text line."""
+        ts  = event_dict.pop("timestamp", "")
+        lvl = event_dict.pop("level", method).upper()
+        evt = event_dict.pop("event", "")
+        tail = ("  " + "  ".join(f"{k}={v!r}" for k, v in event_dict.items())
+                if event_dict else "")
+        return f"{ts} [{lvl:<7}] {evt}{tail}"
+
+    _plain_fmt = logging.Formatter("%(message)s")
+
+    # Reset root logger handlers (avoid duplicates on lifespan reload)
+    _root = logging.getLogger()
+    _root.setLevel(_log_level)
+    for _h in list(_root.handlers):
+        _root.removeHandler(_h)
+
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(_plain_fmt)
+    _root.addHandler(_sh)
+
+    # Rotating file: 5 MB × 5 backups — lives next to logsaga.db
+    _log_path = Path(db_path).parent / "logsaga.log"
+    try:
+        _fh = logging.handlers.RotatingFileHandler(
+            str(_log_path), maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8",
+        )
+        _fh.setFormatter(_plain_fmt)
+        _root.addHandler(_fh)
+    except OSError:
+        pass  # Can't write log file — stdout only
+
     structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(cfg.log_level)
-        ),
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.stdlib.add_log_level,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            _fmt_log,
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
     )
 
     # SQLite engine
