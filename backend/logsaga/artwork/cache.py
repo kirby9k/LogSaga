@@ -42,6 +42,14 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT = 15.0
 _MIN_FILE_BYTES = 100  # sanity: skip empty/tiny responses
 
+# CDN hostnames that are known to be inaccessible without authentication.
+# URLs from these hosts are silently skipped so the Stage-2 TMDB fallback
+# can supply an alternative URL without burning the retry budget on predictable
+# 403 responses.  thetvdb.com CDN has required a paid API key since ~2023.
+_SKIP_URL_HOSTS: frozenset[str] = frozenset({
+    "artworks.thetvdb.com",
+})
+
 # Only download art types the UI actually displays.
 # Movies use: poster > fanart > clearlogo
 # Episodes use: season.poster > tvshow.poster > tvshow.fanart (portrait slots)
@@ -331,6 +339,9 @@ def fetch_artwork_for_item(
         fetch_error: Optional[str] = None
 
         if kind == "http":
+            # Skip CDNs that always 403 without auth — TMDB fallback handles them
+            if (urlparse(url).hostname or "") in _SKIP_URL_HOSTS:
+                continue
             download_url = url
         elif kind == "vfs":
             if rpc is None:
@@ -514,6 +525,9 @@ async def fetch_artwork_for_item_async(
         fetch_error: Optional[str] = None
 
         if kind == "http":
+            # Skip CDNs that always 403 without auth — TMDB fallback handles them
+            if (urlparse(url).hostname or "") in _SKIP_URL_HOSTS:
+                continue
             download_url = url
         elif kind == "vfs":
             if rpc is None:
