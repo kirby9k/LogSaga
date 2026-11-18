@@ -713,8 +713,6 @@ async def fetch_artwork_tmdb_fallback_async(
 
     Returns the count of artwork rows successfully downloaded.
     """
-    import asyncio
-
     if not missing_types:
         return 0
 
@@ -722,7 +720,7 @@ async def fetch_artwork_tmdb_fallback_async(
 
     if item.media_type == "movie" and item.tmdb_id:
         try:
-            detail = await asyncio.to_thread(tmdb.movie_detail, int(item.tmdb_id))
+            detail = await tmdb.movie_detail(int(item.tmdb_id))
         except Exception as exc:
             logger.warning("tmdb_fallback_movie_detail_failed item_id=%s: %s", item.id, exc)
             return 0
@@ -744,9 +742,7 @@ async def fetch_artwork_tmdb_fallback_async(
 
         if "thumb" in missing_types and item.season is not None and item.episode is not None:
             try:
-                season_data = await asyncio.to_thread(
-                    tmdb.season_detail, show_tmdb_id, item.season
-                )
+                season_data = await tmdb.season_detail(show_tmdb_id, item.season)
                 ep = next(
                     (
                         e for e in season_data.get("episodes", [])
@@ -764,7 +760,7 @@ async def fetch_artwork_tmdb_fallback_async(
 
         if "tvshow.poster" in missing_types:
             try:
-                tv_data = await asyncio.to_thread(tmdb.tv_detail, show_tmdb_id)
+                tv_data = await tmdb.tv_detail(show_tmdb_id)
                 if tv_data.get("poster_path"):
                     url = tmdb.poster_url(tv_data["poster_path"])
                     if url:
