@@ -724,8 +724,7 @@ async def fetch_artwork_tmdb_fallback_async(
         try:
             detail = await asyncio.to_thread(tmdb.movie_detail, int(item.tmdb_id))
         except Exception as exc:
-            logger.warning("tmdb_fallback_movie_detail_failed",
-                           item_id=item.id, error=str(exc))
+            logger.warning("tmdb_fallback_movie_detail_failed item_id=%s: %s", item.id, exc)
             return 0
         if "poster" in missing_types and detail.get("poster_path"):
             url = tmdb.poster_url(detail["poster_path"])
@@ -760,8 +759,8 @@ async def fetch_artwork_tmdb_fallback_async(
                     if url:
                         urls["thumb"] = url
             except Exception as exc:
-                logger.warning("tmdb_fallback_season_detail_failed",
-                               item_id=item.id, season=item.season, error=str(exc))
+                logger.warning("tmdb_fallback_season_detail_failed item_id=%s season=%s: %s",
+                               item.id, item.season, exc)
 
         if "tvshow.poster" in missing_types:
             try:
@@ -771,8 +770,8 @@ async def fetch_artwork_tmdb_fallback_async(
                     if url:
                         urls["tvshow.poster"] = url
             except Exception as exc:
-                logger.warning("tmdb_fallback_tv_detail_failed",
-                               item_id=item.id, show_tmdb_id=show_tmdb_id, error=str(exc))
+                logger.warning("tmdb_fallback_tv_detail_failed item_id=%s show_tmdb_id=%s: %s",
+                               item.id, show_tmdb_id, exc)
 
     if not urls:
         return 0
