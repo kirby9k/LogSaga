@@ -22,7 +22,7 @@ logger = structlog.get_logger(__name__)
 # Artwork row with a non-NULL local_path.
 REQUIRED_ART_TYPES: dict[str, set[str]] = {
     "movie":   {"poster", "fanart"},
-    "episode": {"thumb", "tvshow.poster"},
+    "episode": {"thumb", "tvshow.poster", "tvshow.fanart", "season.poster"},
 }
 
 

@@ -84,7 +84,7 @@ function ItemDetailPage() {
   const missingRequiredArt = useMemo(() => {
     if (!data) return false
     const required = data.media_type === 'episode'
-      ? ['thumb', 'tvshow.poster']
+      ? ['thumb', 'tvshow.poster', 'tvshow.fanart', 'season.poster']
       : ['poster', 'fanart']
     return required.some(t => !data.artwork.find(a => a.art_type === t && a.local_path))
   }, [data])

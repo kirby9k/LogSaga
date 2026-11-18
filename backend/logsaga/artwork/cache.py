@@ -740,31 +740,48 @@ async def fetch_artwork_tmdb_fallback_async(
             return 0
         show_tmdb_id = int(show.tmdb_id)
 
-        if "thumb" in missing_types and item.season is not None and item.episode is not None:
+        needs_season = (
+            ("thumb" in missing_types or "season.poster" in missing_types)
+            and item.season is not None
+            and item.episode is not None
+        )
+        if needs_season:
             try:
                 season_data = await tmdb.season_detail(show_tmdb_id, item.season)
-                ep = next(
-                    (
-                        e for e in season_data.get("episodes", [])
-                        if e.get("episode_number") == item.episode
-                    ),
-                    None,
-                )
-                if ep and ep.get("still_path"):
-                    url = tmdb.backdrop_url(ep["still_path"], size="w780")
+                if "thumb" in missing_types:
+                    ep = next(
+                        (
+                            e for e in season_data.get("episodes", [])
+                            if e.get("episode_number") == item.episode
+                        ),
+                        None,
+                    )
+                    if ep and ep.get("still_path"):
+                        url = tmdb.backdrop_url(ep["still_path"], size="w780")
+                        if url:
+                            urls["thumb"] = url
+                if "season.poster" in missing_types and season_data.get("poster_path"):
+                    url = tmdb.poster_url(season_data["poster_path"])
                     if url:
-                        urls["thumb"] = url
+                        urls["season.poster"] = url
             except Exception as exc:
                 logger.warning("tmdb_fallback_season_detail_failed item_id=%s season=%s: %s",
                                item.id, item.season, exc)
 
-        if "tvshow.poster" in missing_types:
+        needs_tv = (
+            "tvshow.poster" in missing_types or "tvshow.fanart" in missing_types
+        )
+        if needs_tv:
             try:
                 tv_data = await tmdb.tv_detail(show_tmdb_id)
-                if tv_data.get("poster_path"):
+                if "tvshow.poster" in missing_types and tv_data.get("poster_path"):
                     url = tmdb.poster_url(tv_data["poster_path"])
                     if url:
                         urls["tvshow.poster"] = url
+                if "tvshow.fanart" in missing_types and tv_data.get("backdrop_path"):
+                    url = tmdb.backdrop_url(tv_data["backdrop_path"])
+                    if url:
+                        urls["tvshow.fanart"] = url
             except Exception as exc:
                 logger.warning("tmdb_fallback_tv_detail_failed item_id=%s show_tmdb_id=%s: %s",
                                item.id, show_tmdb_id, exc)
