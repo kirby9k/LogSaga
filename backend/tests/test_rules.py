@@ -418,6 +418,23 @@ class TestFileRemoved:
 # Scenario 11: Sequential binge (auto-advance) → N separate sessions
 # ---------------------------------------------------------------------------
 class TestSequentialBinge:
+    def test_binge_percent_100_per_episode(self):
+        """Each completed session in a binge should show percent=100."""
+        all_obs = []
+        t = 0
+        for ep in range(3):
+            all_obs.append(_obs(ObservationKind.lastplayed_changed, t, obs_id=ep * 2 + 1))
+            all_obs.append(_obs(ObservationKind.playcount_up, t, play_count=ep + 1,
+                                obs_id=ep * 2 + 2))
+            t += 1296 // 60
+        total_sessions = []
+        for ep in range(3):
+            ep_obs = all_obs[ep * 2: ep * 2 + 2]
+            sessions = apply_observations(ep_obs, [], _EPISODE_SETTINGS, runtime_s=1440)
+            total_sessions.extend(sessions)
+        for s in total_sessions:
+            assert s.percent == 100.0
+
     def test_binge_creates_one_session_per_episode(self):
         """
         Auto-advancing through 5 episodes, each completes via playcount_up.
@@ -444,3 +461,92 @@ class TestSequentialBinge:
         assert len(total_sessions) == 5
         for s in total_sessions:
             assert s.status == SessionStatus.completed
+
+
+# ---------------------------------------------------------------------------
+# Scenario 12: Completed sessions always show percent=100
+# Regression: Device 1 crash/resume addon produces inflated totalTimeInSeconds
+# on some video formats, causing percent to appear as ~15% even when watched in full.
+# ---------------------------------------------------------------------------
+class TestCompletedPercent:
+    def test_kodi_playcount_completion_sets_percent_100(self):
+        """
+        Completion via kodi_playcount always sets percent=100.0 regardless of
+        what the last position-based calculation yielded.
+        """
+        obs = [
+            _obs(ObservationKind.resume_set, 0, resume_pos_s=100.0, resume_total_s=EPISODE_RUNTIME),
+            _obs(ObservationKind.resume_moved, 5, resume_pos_s=600.0, resume_total_s=EPISODE_RUNTIME),
+            _obs(ObservationKind.resume_moved, 10, resume_pos_s=1150.0, resume_total_s=EPISODE_RUNTIME),
+            _obs(ObservationKind.lastplayed_changed, 20),
+            _obs(ObservationKind.playcount_up, 20, play_count=1),
+        ]
+        sessions = apply_observations(obs, [], _EPISODE_SETTINGS, runtime_s=EPISODE_RUNTIME)
+        assert sessions[0].status == SessionStatus.completed
+        assert sessions[0].percent == 100.0
+
+    def test_position_completion_sets_percent_100(self):
+        """Completion via position threshold also sets percent=100.0."""
+        pos_90pct = int(EPISODE_RUNTIME * 0.9) + 1
+        obs = [
+            _obs(ObservationKind.resume_set, 0, resume_pos_s=100.0, resume_total_s=EPISODE_RUNTIME),
+            _obs(ObservationKind.resume_moved, 10, resume_pos_s=float(pos_90pct),
+                 resume_total_s=EPISODE_RUNTIME),
+        ]
+        sessions = apply_observations(obs, [], _EPISODE_SETTINGS, runtime_s=EPISODE_RUNTIME)
+        assert sessions[0].status == SessionStatus.completed
+        assert sessions[0].percent == 100.0
+
+    def test_credits_window_completion_sets_percent_100(self):
+        """Completion via credits window also sets percent=100.0."""
+        credits_pos = float(EPISODE_RUNTIME - (3 * 60) + 10)
+        obs = [
+            _obs(ObservationKind.resume_set, 0, resume_pos_s=100.0, resume_total_s=EPISODE_RUNTIME),
+            _obs(ObservationKind.resume_moved, 10, resume_pos_s=credits_pos,
+                 resume_total_s=EPISODE_RUNTIME),
+        ]
+        sessions = apply_observations(obs, [], _EPISODE_SETTINGS, runtime_s=EPISODE_RUNTIME)
+        assert sessions[0].status == SessionStatus.completed
+        assert sessions[0].percent == 100.0
+
+    def test_inflated_resume_total_does_not_deflate_percent(self):
+        """
+        Regression: crash/resume addon on some codecs reports a totalTimeInSeconds
+        far larger than the actual episode duration. When item.runtime_s is provided
+        by the caller (from streamdetails), resume_total_s must not inflate it.
+        """
+        INFLATED_TOTAL = EPISODE_RUNTIME * 7  # Kodi reports 7x the real duration
+        obs = [
+            _obs(ObservationKind.resume_set, 0, resume_pos_s=100.0,
+                 resume_total_s=INFLATED_TOTAL),
+            _obs(ObservationKind.resume_moved, 5, resume_pos_s=600.0,
+                 resume_total_s=INFLATED_TOTAL),
+            _obs(ObservationKind.resume_moved, 10, resume_pos_s=1180.0,
+                 resume_total_s=INFLATED_TOTAL),
+            _obs(ObservationKind.resume_cleared, 20),
+            _obs(ObservationKind.lastplayed_changed, 20),
+            _obs(ObservationKind.playcount_up, 20, play_count=1),
+        ]
+        sessions = apply_observations(obs, [], _EPISODE_SETTINGS, runtime_s=EPISODE_RUNTIME)
+        assert sessions[0].status == SessionStatus.completed
+        # runtime must not have been inflated
+        assert sessions[0].runtime_s == EPISODE_RUNTIME
+        # percent must reflect true completion
+        assert sessions[0].percent == 100.0
+
+    def test_inflated_total_still_fills_missing_runtime(self):
+        """
+        When item.runtime_s is None (no streamdetails), resume_total_s is the
+        only runtime source and should still be used.
+        """
+        obs = [
+            _obs(ObservationKind.resume_set, 0, resume_pos_s=100.0,
+                 resume_total_s=float(EPISODE_RUNTIME)),
+            _obs(ObservationKind.resume_moved, 5, resume_pos_s=600.0,
+                 resume_total_s=float(EPISODE_RUNTIME)),
+            _obs(ObservationKind.playcount_up, 20, play_count=1),
+        ]
+        sessions = apply_observations(obs, [], _EPISODE_SETTINGS, runtime_s=None)
+        assert sessions[0].status == SessionStatus.completed
+        assert sessions[0].runtime_s == EPISODE_RUNTIME
+        assert sessions[0].percent == 100.0

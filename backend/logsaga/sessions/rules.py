@@ -147,6 +147,7 @@ def _mark_completed(
         session.completion_reason = reason
         session.completed_at = at
         session.ended_at = at
+        session.percent = 100.0
         session.dirty = True
 
 
@@ -251,6 +252,13 @@ def apply_observations(
 
     Does not modify observations — they are append-only.
     """
+    # Capture the trusted runtime provided by the caller (from item metadata /
+    # streamdetails). bookmark.totalTimeInSeconds can be inflated by Kodi's player
+    # (codec overestimates, especially on hardware-accelerated playback). We only
+    # allow resume_total_s to fill in a missing runtime — never to override a
+    # known one — so that percent stays accurate throughout the session.
+    _trusted_runtime_s = runtime_s
+
     # Work on a copy so callers can compare before/after if needed
     sessions = list(existing_sessions)
     if runtime_s is None and sessions:
@@ -306,10 +314,14 @@ def apply_observations(
         if obs.observed_at > session.last_activity_at:
             session.last_activity_at = obs.observed_at
 
-        # Update runtime if we now have a better value
+        # Update runtime only when no trusted runtime from item metadata is known.
+        # If _trusted_runtime_s is set, the caller has a reliable value from
+        # streamdetails / scraper — resume_total_s must not inflate it.
         if obs.resume_total_s and obs.resume_total_s > 0:
             new_runtime = int(obs.resume_total_s)
-            if session.runtime_s is None or new_runtime > session.runtime_s:
+            if session.runtime_s is None or (
+                _trusted_runtime_s is None and new_runtime > session.runtime_s
+            ):
                 session.runtime_s = new_runtime
                 runtime_s = new_runtime
 
