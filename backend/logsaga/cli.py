@@ -643,9 +643,9 @@ def enrich_metadata(
 def rebuild_sessions(
     db_path: str = typer.Option("logsaga.db", envvar="LOGSAGA_DB_PATH"),
 ) -> None:
-    """Delete all watch_session rows and rebuild from observations."""
+    """Rebuild sessions from observations. Manual/backfill sessions are preserved."""
     from logsaga.models import WatchSession
-    from logsaga.sessions.builder import rebuild_all
+    from logsaga.sessions.builder import NON_REBUILD_SOURCES, rebuild_all
 
     cfg = _get_settings()
     _, SessionLocal = _get_db_session(db_path)
@@ -654,7 +654,13 @@ def rebuild_sessions(
         before = db.query(WatchSession).count()
         typer.echo(f"Sessions before rebuild: {before}")
 
-        db.query(WatchSession).delete()
+        # Remove all poll-sourced sessions globally first (this also cleans up any
+        # orphan sessions for items deleted from media_item). Non-poll sessions
+        # (manual, backfill, backfill_prior) are never deleted — rebuild_for_item
+        # will leave them in place as well.
+        db.query(WatchSession).filter(
+            WatchSession.source.notin_(NON_REBUILD_SOURCES)
+        ).delete(synchronize_session=False)
         db.flush()
 
         items_processed, sessions_created = rebuild_all(db, cfg)

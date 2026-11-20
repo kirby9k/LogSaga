@@ -187,3 +187,113 @@ class TestBuildIncremental:
         item = _make_item(db_session)
         result = build_incremental(item.id, [], db_session, test_settings)
         assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# Rebuild preserves non-poll sessions (regression for audit finding #1)
+# Manual, backfill, and backfill_prior sessions have no kodi_observation rows.
+# They must survive rebuild_for_item and rebuild_all unchanged.
+# ---------------------------------------------------------------------------
+class TestRebuildPreservesNonPollSessions:
+    def _make_session(self, db, item, source, started_offset_days=0):
+        from datetime import timedelta
+        at = datetime(2026, 1, 1) + timedelta(days=started_offset_days)
+        ws = WatchSession(
+            media_item_id=item.id,
+            started_at=at,
+            last_activity_at=at,
+            ended_at=at,
+            completed_at=at,
+            max_position_s=float(item.runtime_s) if item.runtime_s else None,
+            runtime_s=item.runtime_s,
+            percent=100.0,
+            status=SessionStatus.completed,
+            completion_reason=CompletionReason.kodi_playcount,
+            source=source,
+        )
+        db.add(ws)
+        db.flush()
+        return ws
+
+    def test_manual_session_survives_rebuild(self, db_session, test_settings):
+        item = _make_item(db_session)
+        ws = self._make_session(db_session, item, SessionSource.manual)
+        ws_id = ws.id
+
+        rebuild_for_item(item.id, db_session, test_settings)
+        db_session.flush()
+
+        sessions = db_session.query(WatchSession).filter_by(media_item_id=item.id).all()
+        assert len(sessions) == 1
+        assert sessions[0].source == SessionSource.manual
+
+    def test_backfill_session_survives_rebuild(self, db_session, test_settings):
+        item = _make_item(db_session)
+        self._make_session(db_session, item, SessionSource.backfill)
+
+        rebuild_for_item(item.id, db_session, test_settings)
+        db_session.flush()
+
+        sessions = db_session.query(WatchSession).filter_by(media_item_id=item.id).all()
+        assert len(sessions) == 1
+        assert sessions[0].source == SessionSource.backfill
+
+    def test_backfill_prior_session_survives_rebuild(self, db_session, test_settings):
+        item = _make_item(db_session)
+        ws = self._make_session(db_session, item, SessionSource.backfill_prior)
+        ws.started_at = datetime(1970, 1, 1)
+
+        rebuild_for_item(item.id, db_session, test_settings)
+        db_session.flush()
+
+        sessions = db_session.query(WatchSession).filter_by(media_item_id=item.id).all()
+        assert len(sessions) == 1
+        assert sessions[0].source == SessionSource.backfill_prior
+        assert sessions[0].started_at == datetime(1970, 1, 1)
+
+    def test_poll_session_is_deleted_and_rebuilt(self, db_session, test_settings):
+        """poll sessions ARE rebuilt from observations — old one replaced by fresh one."""
+        item = _make_item(db_session)
+        # Create a stale poll session
+        self._make_session(db_session, item, SessionSource.poll)
+        # Add observations that should produce a fresh session
+        _make_obs(db_session, item, ObservationKind.playcount_up, 0, play_count=1)
+
+        rebuild_for_item(item.id, db_session, test_settings)
+        db_session.flush()
+
+        sessions = db_session.query(WatchSession).filter_by(media_item_id=item.id).all()
+        assert len(sessions) == 1
+        assert sessions[0].source == SessionSource.poll
+
+    def test_mixed_manual_and_observations_both_survive(self, db_session, test_settings):
+        """An item with a manual session AND observations keeps both after rebuild."""
+        item = _make_item(db_session)
+        self._make_session(db_session, item, SessionSource.manual, started_offset_days=0)
+        # A separate live-watch observation (different day)
+        _make_obs(db_session, item, ObservationKind.playcount_up, 0, play_count=1)
+
+        rebuild_for_item(item.id, db_session, test_settings)
+        db_session.flush()
+
+        sessions = db_session.query(WatchSession).filter_by(media_item_id=item.id).all()
+        assert len(sessions) == 2
+        sources = {s.source for s in sessions}
+        assert SessionSource.manual in sources
+        assert SessionSource.poll in sources
+
+    def test_rebuild_all_preserves_manual_across_all_items(
+        self, db_session, test_settings
+    ):
+        item1 = _make_item(db_session, title="Ep1", episode=1)
+        item2 = _make_item(db_session, title="Ep2", episode=2)
+        self._make_session(db_session, item1, SessionSource.manual)
+        self._make_session(db_session, item2, SessionSource.backfill)
+        db_session.commit()
+
+        rebuild_all(db_session, test_settings)
+
+        s1 = db_session.query(WatchSession).filter_by(media_item_id=item1.id).all()
+        s2 = db_session.query(WatchSession).filter_by(media_item_id=item2.id).all()
+        assert len(s1) == 1 and s1[0].source == SessionSource.manual
+        assert len(s2) == 1 and s2[0].source == SessionSource.backfill

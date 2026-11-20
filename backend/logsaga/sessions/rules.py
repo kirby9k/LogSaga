@@ -178,14 +178,6 @@ def _close_session(session: SessionRow, at: datetime, settings: SessionSettings)
     session.dirty = True
 
 
-def _find_open_session(sessions: list[SessionRow]) -> Optional[SessionRow]:
-    """Return the most recently active open session, or None."""
-    open_sessions = [s for s in sessions if s.status == SessionStatus.open]
-    if not open_sessions:
-        return None
-    return max(open_sessions, key=lambda s: s.last_activity_at)
-
-
 def _find_mergeable_session(
     sessions: list[SessionRow],
     observed_at: datetime,

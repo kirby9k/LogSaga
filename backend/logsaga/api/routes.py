@@ -28,7 +28,6 @@ from logsaga.api.schemas import (
     AdminSettingsOut,
     ArtworkMissingOut,
     ArtworkOut,
-    ArtworkRecoverOut,
     ArtworkStatusOut,
     CastStatusOut,
     ConfigAllOut,

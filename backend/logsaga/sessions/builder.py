@@ -31,6 +31,14 @@ from logsaga.sessions.rules import (
     close_timed_out_sessions,
 )
 
+# Session sources that have no kodi_observation rows and cannot be rebuilt
+# from observations. rebuild_for_item must leave these sessions untouched.
+NON_REBUILD_SOURCES = (
+    SessionSource.manual,
+    SessionSource.backfill,
+    SessionSource.backfill_prior,
+)
+
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -159,8 +167,13 @@ def rebuild_for_item(
     if item is None:
         return 0
 
-    # Delete existing sessions
-    db.query(WatchSession).filter_by(media_item_id=media_item_id).delete()
+    # Delete only poll-sourced sessions — manual, backfill, and backfill_prior
+    # sessions have no kodi_observation rows and cannot be rebuilt from observations.
+    # They must survive the rebuild intact.
+    db.query(WatchSession).filter(
+        WatchSession.media_item_id == media_item_id,
+        WatchSession.source.notin_(NON_REBUILD_SOURCES),
+    ).delete(synchronize_session="fetch")
 
     # Load all observations, sorted oldest first
     observations = (
@@ -205,7 +218,6 @@ def rebuild_all(db: Session, cfg: Settings) -> tuple[int, int]:
     for item_id in item_ids:
         total_sessions += rebuild_for_item(item_id, db, cfg)
         db.flush()
-    db.commit()
     return len(item_ids), total_sessions
 
 
