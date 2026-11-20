@@ -650,6 +650,14 @@ def rebuild_sessions(
     cfg = _get_settings()
     _, SessionLocal = _get_db_session(db_path)
 
+    # Pre-rebuild backup (best-effort — rebuild proceeds even if backup fails)
+    from logsaga.backup.manager import create_backup as _create_backup
+    try:
+        binfo = _create_backup(db_path)
+        typer.echo(f"Pre-rebuild backup: {binfo.filename}")
+    except Exception as exc:
+        typer.echo(f"Warning: pre-rebuild backup failed — {exc}", err=True)
+
     with SessionLocal() as db:
         before = db.query(WatchSession).count()
         typer.echo(f"Sessions before rebuild: {before}")

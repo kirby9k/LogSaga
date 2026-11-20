@@ -153,7 +153,7 @@ def create_backup(db_path: str, app_version: str = "dev") -> BackupInfo:
     except Exception as exc:
         logger.warning("backup_count_error", error=str(exc))
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         tmp_db = Path(tmp) / _DB_FILENAME
 
         # --- Live consistent snapshot via sqlite3.backup() ---
@@ -244,7 +244,7 @@ def verify_backup(zip_path: Path, current_schema: str) -> VerifyResult:
                                 app_compatible=False, sessions=None, media_items=None,
                                 shows=None, created_at=None, credentials_stripped=False)
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             with zipfile.ZipFile(str(zip_path), "r") as zf:
                 names = zf.namelist()
                 if _DB_FILENAME not in names:
@@ -307,7 +307,7 @@ def restore_from_zip(zip_path: Path, db_path: str) -> None:
 
     pending = Path(db_path + ".restore_pending")
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         with zipfile.ZipFile(str(zip_path), "r") as zf:
             if _DB_FILENAME not in zf.namelist():
                 raise ValueError("Backup ZIP missing logsaga.db")
@@ -342,7 +342,7 @@ def make_stripped_copy(zip_path: Path) -> Path:
     tmp_zip = Path(tmp_path_str)
 
     try:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             # Extract full backup
             with zipfile.ZipFile(str(zip_path), "r") as zf:
                 zf.extractall(tmp)

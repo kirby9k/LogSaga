@@ -1602,18 +1602,31 @@ async def rebuild_sessions(
 
     engine = request.app.state.engine
 
-    def _run() -> tuple[int, int]:
+    def _run() -> tuple[int, int, Optional[str]]:
+        from logsaga.backup.manager import create_backup
         from sqlalchemy.orm import sessionmaker
+
+        # Pre-rebuild backup (best-effort — rebuild proceeds even if backup fails)
+        backup_filename: Optional[str] = None
+        try:
+            binfo = create_backup(cfg.logsaga_db_path)
+            backup_filename = binfo.filename
+            log.info("Pre-rebuild backup created: %s", backup_filename)
+        except Exception as exc:
+            log.warning("Pre-rebuild backup failed: %s", exc)
+
         with sessionmaker(bind=engine)() as db:
             items_processed, sessions_created = rebuild_all(db, cfg)
             db.commit()
-            return items_processed, sessions_created
+        return items_processed, sessions_created, backup_filename
 
     _job_state["rebuild_sessions"]["running"] = True
     _job_state["rebuild_sessions"]["last_result"] = None
     try:
-        items_processed, sessions_created = await asyncio.to_thread(_run)
+        items_processed, sessions_created, backup_filename = await asyncio.to_thread(_run)
         msg = f"Rebuilt {sessions_created} sessions across {items_processed} items."
+        if backup_filename:
+            msg += f" Pre-rebuild backup: {backup_filename}."
         _job_state["rebuild_sessions"]["last_result"] = msg
         return RebuildSessionsOut(
             items_processed=items_processed,

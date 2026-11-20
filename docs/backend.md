@@ -435,6 +435,70 @@ The SPA is served by a catch-all route returning `index.html` for all non-API, n
 
 ---
 
+## Backup system
+
+Implemented in `logsaga/backup/manager.py`. The UI for all operations lives on the
+`/configuration` page (Backups tab).
+
+### Storage and naming
+
+Backups are stored in `{db_dir}/backups/` — a `backups/` subdirectory sibling to the
+SQLite file. In Docker this is `/config/backups/`.
+
+Filename: `logsaga-backup-{YYYY-MM-DDTHH-MM-SS}.zip` (UTC, second-level precision).
+No automatic pruning — delete via the API or directly on disk.
+
+### ZIP contents
+
+Each backup is a ZIP with two entries:
+
+| Entry | Description |
+|-------|-------------|
+| `logsaga.db` | Full SQLite snapshot via `sqlite3.backup()` — consistent, no exclusive lock on live DB |
+| `meta.json` | `created_at`, `schema_version`, `sessions`, `media_items`, `shows`, `app_version`, `credentials_stripped` |
+
+**Excluded:** `tmdb_cache` rows are deleted from the copy before zipping (table schema
+is kept; only rows are removed). The cache auto-rebuilds from TMDB; excluding it keeps
+backup files lean.
+
+### Server-side vs downloaded
+
+**Server-side backups** (`/config/backups/`) are full: all settings rows present,
+`credentials_stripped: false` in `meta.json`.
+
+**Downloaded backups** (via `GET /api/admin/backups/{name}/download`) are stripped:
+`kodi_db_password`, `kodi_jsonrpc_password`, `tmdb_api_key`, and `mqtt_password` are
+deleted from the `settings` table in the copy. `credentials_stripped: true` in
+`meta.json`. The source ZIP on disk is never modified.
+
+### Automatic pre-rebuild backup
+
+`rebuild-sessions` (CLI and API) calls `create_backup()` before deleting any sessions.
+This is **best-effort**: if the backup fails (e.g. disk full) a warning is logged and
+the rebuild still proceeds. The backup filename appears in CLI output and in the API
+response message.
+
+### Restore behaviour
+
+`restore_from_zip(zip_path, db_path)` extracts `logsaga.db` from the ZIP, runs
+`PRAGMA integrity_check`, then atomically replaces the live database with `os.replace()`
+(a rename — instant and crash-safe). The source ZIP and source database are never
+modified. The caller (API route) is responsible for reloading the SQLAlchemy engine
+after this returns.
+
+### Python API (`logsaga.backup.manager`)
+
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `create_backup(db_path, app_version)` | `BackupInfo` | Raises `OSError` or `sqlite3.Error` on failure |
+| `list_backups(db_path)` | `list[BackupInfo]` | Newest first; empty list if dir missing |
+| `verify_backup(zip_path, current_schema)` | `VerifyResult` | Never raises |
+| `restore_from_zip(zip_path, db_path)` | `None` | Raises `ValueError` on validation failure |
+| `make_stripped_copy(zip_path)` | `Path` (temp file) | Caller must `unlink()` after use |
+| `backup_dir(db_path)` | `Path` | Returns `{db_dir}/backups/` |
+
+---
+
 ## Kodi DB protection layers
 
 All layers must stay in place. See `kodi/db.py`. Adding or removing any layer requires explicit approval.
