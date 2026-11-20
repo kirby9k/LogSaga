@@ -351,8 +351,8 @@ Full interactive spec available at `/api/docs` (Swagger UI) and `/api/redoc`.
 |--------|------|-------------|
 | GET | `/api/health` | Sync status, DB name, counters, active rule settings |
 | GET | `/api/stats` | Aggregated stats. Param: `days` (1–365, default 30) |
-| GET | `/api/stats/dashboard` | Dashboard summary stats (total items, sessions, hours) |
-| GET | `/api/jobs` | Background job state: running flag, last run, last result per job |
+| GET | `/api/dashboard/stats` | Dashboard summary stats (total items, sessions, hours) |
+| GET | `/api/admin/jobs` | Background job state: running flag, last run, last result per job |
 
 **History**
 
@@ -374,7 +374,6 @@ Full interactive spec available at `/api/docs` (Swagger UI) and `/api/redoc`.
 | GET | `/api/shows/{show_id}/seasons/{season}` | Season detail: episode list with watched flags |
 | GET | `/api/recently-added` | Items by `date_added` DESC. Params: `type`, `limit`, `offset` |
 | GET | `/api/items/{id}` | Full item detail: metadata, all sessions, all observations, all artwork |
-| GET | `/api/items/{id}/artwork` | Artwork rows for one item |
 | POST | `/api/items/{id}/recover-artwork` | Force re-fetch artwork for one item (rate-limited 10 min) |
 | GET | `/api/search` | Search local library + TMDB. Params: `q`, `type`, `limit` |
 | GET | `/api/recently-viewed` | TMDB browse history (capped at 50). Param: `limit` |
@@ -385,7 +384,7 @@ Full interactive spec available at `/api/docs` (Swagger UI) and `/api/redoc`.
 |--------|------|-------------|
 | GET | `/api/actors/{tmdb_person_id}` | Actor detail: bio, watched history, library grid |
 | GET | `/api/actors/{tmdb_person_id}/filmography` | Full filmography with watch status |
-| GET | `/api/actors/{tmdb_person_id}/recent-sessions` | 5 most-recent sessions for items featuring this actor |
+| GET | `/api/actors/{tmdb_person_id}/recently-played` | Sessions for movies/episodes featuring this actor |
 | GET | `/api/actors/{tmdb_person_id}/recommendations` | Actor-based recommendations |
 
 **TMDB proxies** (cached; use `tmdb_cache`)
@@ -401,34 +400,39 @@ Full interactive spec available at `/api/docs` (Swagger UI) and `/api/redoc`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/admin/artwork-status` | Artwork progress: total_items, items_with_artwork, pending |
+| GET | `/api/admin/artwork/missing` | List item IDs missing required artwork types |
 | POST | `/api/admin/fetch-artwork` | Trigger artwork fetch (fire-and-forget) |
-| POST | `/api/admin/recover-missing-artwork` | Re-fetch artwork for all items missing local files |
+| POST | `/api/admin/artwork/recover-missing` | Re-fetch artwork for all items missing local files |
 | GET | `/api/admin/cast-status` | Cast coverage: items with/without cast entries |
 | GET | `/api/admin/settings` | Current session rule values from AppSetting |
 | PUT | `/api/admin/settings` | Update session rule values |
 | POST | `/api/admin/rebuild-sessions` | Rebuild all sessions from observations. Runs in thread pool. |
+| POST | `/api/admin/poll` | Trigger one poll cycle immediately |
+| POST | `/api/admin/sync-library` | Trigger a full library sync immediately |
+| POST | `/api/admin/enrich-cast` | Trigger cast enrichment for items missing cast |
+| POST | `/api/admin/enrich-tmdb-ids` | Trigger TMDB ID search for items missing one |
 
-**Configuration** (live-editable; persisted to env/`.env`)
+**Configuration** (live-editable; persisted to `app_setting` table)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/config` | All config sections |
-| GET/PUT | `/api/config/kodi` | Kodi DB connection settings |
-| GET/PUT | `/api/config/jsonrpc` | Kodi JSON-RPC settings |
-| GET/PUT | `/api/config/tmdb` | TMDB API key |
-| GET/PUT | `/api/config/mqtt` | MQTT broker settings |
-| GET/PUT | `/api/config/app` | App settings (poll interval, artwork dir, etc.) |
-| POST | `/api/config/test-connection` | Test Kodi DB + JSON-RPC connectivity |
+| GET | `/api/admin/config` | All config sections |
+| PUT | `/api/admin/config/kodi` | Kodi DB connection settings; tests connection and returns result |
+| PUT | `/api/admin/config/jsonrpc` | Kodi JSON-RPC settings; tests connection |
+| PUT | `/api/admin/config/tmdb` | TMDB API key; tests connectivity |
+| PUT | `/api/admin/config/mqtt` | MQTT broker settings; tests connectivity |
+| PUT | `/api/admin/config/app` | App settings (poll interval, log level, etc.) |
 
 **Backups**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/admin/backups` | List backups |
-| POST | `/api/admin/backups` | Create a backup |
-| POST | `/api/admin/backups/{name}/verify` | Verify backup integrity |
-| POST | `/api/admin/backups/{name}/restore` | Restore from backup |
-| DELETE | `/api/admin/backups/{name}` | Delete a backup |
+| GET | `/api/admin/backup` | List backups (newest first) |
+| POST | `/api/admin/backup` | Create a backup |
+| GET | `/api/admin/backup/{filename}/download` | Download stripped copy (credentials removed) |
+| POST | `/api/admin/backup/verify` | Verify backup integrity and schema compatibility |
+| POST | `/api/admin/backup/restore` | Restore from backup (atomic replace; engine reloaded) |
+| DELETE | `/api/admin/backup/{filename}` | Delete a backup |
 
 Artwork is served at `/art/<local_path>` (FastAPI `StaticFiles` mounted on `ARTWORK_DIR`).
 The SPA is served by a catch-all route returning `index.html` for all non-API, non-asset paths.
@@ -466,7 +470,7 @@ backup files lean.
 **Server-side backups** (`/config/backups/`) are full: all settings rows present,
 `credentials_stripped: false` in `meta.json`.
 
-**Downloaded backups** (via `GET /api/admin/backups/{name}/download`) are stripped:
+**Downloaded backups** (via `GET /api/admin/backup/{filename}/download`) are stripped:
 `kodi_db_password`, `kodi_jsonrpc_password`, `tmdb_api_key`, and `mqtt_password` are
 deleted from the `settings` table in the copy. `credentials_stripped: true` in
 `meta.json`. The source ZIP on disk is never modified.

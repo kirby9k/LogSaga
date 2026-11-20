@@ -179,7 +179,7 @@ export const apiClient = createClient<paths>({ baseUrl: '/' })
 | Hook | Endpoint |
 |------|----------|
 | `useHealth()` | GET /api/health |
-| `useDashboardStats()` | GET /api/stats/dashboard |
+| `useDashboardStats()` | GET /api/dashboard/stats |
 | `useStats(days)` | GET /api/stats |
 | `useRecent(params)` | GET /api/recent |
 | `useRecentInfinite(params)` | GET /api/recent (infinite scroll) |
@@ -198,14 +198,14 @@ export const apiClient = createClient<paths>({ baseUrl: '/' })
 | `useTMDBSeason(tmdbId, season)` | GET /api/tmdb/tv/{id}/season/{n} |
 | `useActor(tmdbPersonId)` | GET /api/actors/{id} |
 | `useActorFilmography(tmdbPersonId)` | GET /api/actors/{id}/filmography |
-| `useActorRecentSessions(tmdbPersonId)` | GET /api/actors/{id}/recent-sessions |
+| `useActorRecentSessions(tmdbPersonId)` | GET /api/actors/{id}/recently-played |
 | `useActorRecommendations(tmdbPersonId)` | GET /api/actors/{id}/recommendations |
 | `useAdminSettings()` | GET /api/admin/settings |
 | `useArtworkStatus()` | GET /api/admin/artwork-status |
 | `useCastStatus()` | GET /api/admin/cast-status |
-| `useJobs()` | GET /api/jobs |
-| `useAdminConfig()` | GET /api/config |
-| `useBackupList()` | GET /api/admin/backups |
+| `useJobs()` | GET /api/admin/jobs |
+| `useAdminConfig()` | GET /api/admin/config |
+| `useBackupList()` | GET /api/admin/backup |
 
 **Mutation hooks**
 
@@ -216,17 +216,17 @@ export const apiClient = createClient<paths>({ baseUrl: '/' })
 | `useHideSession()` | DELETE /api/sessions/{id} |
 | `useTriggerJob(jobName)` | POST /api/admin/fetch-artwork or similar |
 | `useUpdateSettings()` | PUT /api/admin/settings |
-| `useUpdateConfigKodi()` | PUT /api/config/kodi |
-| `useUpdateConfigJSONRPC()` | PUT /api/config/jsonrpc |
-| `useUpdateConfigTMDB()` | PUT /api/config/tmdb |
-| `useUpdateConfigMQTT()` | PUT /api/config/mqtt |
-| `useUpdateConfigApp()` | PUT /api/config/app |
-| `useRecoverMissingArtwork()` | POST /api/admin/recover-missing-artwork |
+| `useUpdateConfigKodi()` | PUT /api/admin/config/kodi |
+| `useUpdateConfigJSONRPC()` | PUT /api/admin/config/jsonrpc |
+| `useUpdateConfigTMDB()` | PUT /api/admin/config/tmdb |
+| `useUpdateConfigMQTT()` | PUT /api/admin/config/mqtt |
+| `useUpdateConfigApp()` | PUT /api/admin/config/app |
+| `useRecoverMissingArtwork()` | POST /api/admin/artwork/recover-missing |
 | `useRecoverItemArtwork(itemId)` | POST /api/items/{id}/recover-artwork |
-| `useCreateBackup()` | POST /api/admin/backups |
-| `useVerifyBackup()` | POST /api/admin/backups/{name}/verify |
-| `useRestoreBackup()` | POST /api/admin/backups/{name}/restore |
-| `useDeleteBackup()` | DELETE /api/admin/backups/{name} |
+| `useCreateBackup()` | POST /api/admin/backup |
+| `useVerifyBackup()` | POST /api/admin/backup/verify |
+| `useRestoreBackup()` | POST /api/admin/backup/restore |
+| `useDeleteBackup()` | DELETE /api/admin/backup/{filename} |
 
 ### Regenerating types
 

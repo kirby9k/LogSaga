@@ -7,16 +7,18 @@ trigger, and every manual command available.
 
 ## Background tasks (always running)
 
-Four background tasks start when the container starts and run until it stops.
+Five tasks start when the container starts and run until it stops.
+MQTT is a sixth task started only when `MQTT_HOST` is set.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Container startup                                                   │
 │                                                                      │
-│  ① poll_loop          every 30 s      (POLL_SECONDS)                │
-│  ② library_sync_loop  every 2 h       (LIBRARY_SYNC_HOURS)         │
-│  ③ cast_sync_loop     every 24 h      (CAST_SYNC_HOURS)            │
-│  ④ mqtt_publisher     continuous      (if MQTT_HOST set)            │
+│  ① poll_loop           every 30 s      (POLL_SECONDS)               │
+│  ② library_sync_loop   every 2 h       (LIBRARY_SYNC_HOURS)        │
+│  ③ cast_sync_loop      every 24 h      (CAST_SYNC_HOURS)           │
+│  ④ artwork_audit_loop  every 7 days    (10-min startup delay)       │
+│  ⑤ mqtt_publisher      continuous      (if MQTT_HOST set)           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -125,7 +127,18 @@ cast wasn't populated at first detection.
 
 ---
 
-## ④ New item enrichment — `_enrich_new_items_bg`
+## ④ Artwork audit loop — every 7 days
+
+**Initial delay:** 10 minutes after startup.
+**What it does:**
+1. Resets `Artwork` rows with an exhausted retry budget (`consecutive_failures >= 3`, `local_path NULL`) so they get a fresh download attempt.
+2. Calls `_fill_missing_artwork_bg` to re-try all items still missing required art types.
+
+Useful for items whose artwork source was temporarily unavailable (CDN outage, bad URL, etc.) — they get automatically retried weekly.
+
+---
+
+## ⑤ New item enrichment — `_enrich_new_items_bg`
 
 Fired whenever the poll loop creates a new `MediaItem`. Runs in background.
 
@@ -229,7 +242,7 @@ Cast population is **idempotent** — `INSERT OR IGNORE` on `person` and `item_c
 
 ## Manual triggers
 
-### Settings UI (`/settings`)
+### Configuration page (`/configuration`)
 
 Buttons that fire API calls immediately:
 
@@ -238,12 +251,14 @@ Buttons that fire API calls immediately:
 | **Trigger Poll** | `POST /api/admin/poll` | Runs one poll cycle (like the 30 s loop, but now) |
 | **Trigger Library Sync** | `POST /api/admin/sync-library` | Runs one full library sync |
 | **Trigger Artwork Fetch** | `POST /api/admin/fetch-artwork` | Fetches missing artwork for all items |
-| **Trigger Metadata Enrich** | `POST /api/admin/enrich-metadata` | Backfills metadata fields |
 | **Rebuild Sessions** | `POST /api/admin/rebuild-sessions` | Deletes all sessions, rebuilds from observations |
 
-Settings you can change here: `POLL_SECONDS`, `LIBRARY_SYNC_HOURS`, session rules
-(`MIN_STARTED_SECONDS`, `SESSION_GAP_HOURS`, `WATCHED_PERCENT`, credits windows).
-Changes take effect immediately without restart.
+Settings you can change here (via the config tabs): Kodi DB, JSON-RPC, TMDB, MQTT, App settings.
+Session rules (`MIN_STARTED_SECONDS`, `SESSION_GAP_HOURS`, `WATCHED_PERCENT`, credits windows) are
+stored in `app_setting` and take effect immediately without restart.
+
+> **Note:** Metadata enrichment (`enrich-metadata`) has no API endpoint — use the CLI:
+> `docker exec logsaga logsaga enrich-metadata`.
 
 ### CLI commands (`docker exec logsaga logsaga <command>`)
 
@@ -259,6 +274,7 @@ Changes take effect immediately without restart.
 | `enrich-episode-cast` | Fetch per-episode credits (guest stars); separate from show-level cast |
 | `enrich-tmdb-ids` | Search TMDB to find `tmdb_id` for items missing one |
 | `enrich-metadata` | Backfill plot/genres/director/tech fields from Kodi |
+| `migrate-artwork-paths` | Move artwork files to canonical show paths; update DB rows |
 | `backfill` | Import existing `playCount > 0` entries as completed sessions |
 | `backfill-prior-plays` | Create `1970-01-01` placeholder sessions for plays before backfill |
 

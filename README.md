@@ -13,25 +13,30 @@ A self-hosted watch history dashboard for [Kodi](https://kodi.tv). Kodi itself k
 - **Full library browsing** — Movies and TV Shows grids with Watched / All / Unwatched filter tabs, sort options, Show Detail and Season Detail pages with per-episode progress.
 - **Artwork cache** — downloads posters, fanart, clearlogos, and episode thumbnails locally. The UI never fetches from Kodi or external sources at browse time.
 - **History import** — backfills existing Kodi `playCount` / `lastPlayed` data on first run, including placeholder sessions for plays that predate the tracker.
-- **Home Assistant** — MQTT discovery sensors for last watched, recently played, in-progress items, and daily/weekly watch time. *(Phase 6 — in development)*
+- **Home Assistant** — MQTT discovery sensors for last watched, recently played, in-progress items, and daily/weekly watch time. See [docs/home-assistant.md](docs/home-assistant.md).
 - **Runs anywhere Docker runs** — single container, port 8790, persistent `/config` volume.
 
 ### Dashboard views
 
 | View | Description |
 |---|---|
+| Dashboard | Summary stat cards + recently played + recently added strips |
 | Recently Played | Poster timeline grouped by date, newest first, with status badges |
 | Continue Watching | Items Kodi currently has a resume point for |
 | Started, Not Finished | Partial sessions with % reached |
 | Movies | Full library grid with filter tabs and sort options |
 | TV Shows | Full library grid; links to per-show detail |
-| Show Detail | Season list with progress bars and "next up" hint |
-| Season Detail | Episode list with thumbnails, air dates, watched state |
+| Show Detail | Hero backdrop + poster; cast strip; season list; recently played episodes |
+| Season Detail | Episode grid with watched flags, thumbnails, session links |
 | Recently Added | Items by `dateAdded` from Kodi's library |
 | History | Searchable/filterable table with CSV export |
-| Stats | Watch time per day/week/month, top shows/movies, completion rate |
-| Item Detail | Metadata, artwork, every session with its raw observations |
-| Settings/Status | Sync health, DB info, session rules, rebuild button |
+| Stats | Watch time charts, top shows/movies, completion rate |
+| Item Detail | Hero backdrop; cast strip; metadata; every session with raw observations |
+| Actor Detail | Profile, bio, watched history grid, library grid |
+| TMDB Browse | Movie/TV/Season detail pages with "Add to History" |
+| Recently Viewed | TMDB browse history (last 50 items) |
+| Configuration | Kodi DB, JSON-RPC, TMDB, MQTT settings; job status; backup management |
+| Settings/Status | Sync health, session rules (read-only), rebuild button |
 
 ---
 
@@ -162,12 +167,26 @@ All settings are environment variables. Copy `.env.example` to `.env` and set th
 | `KODI_JSONRPC_USER` | *(blank)* | Kodi JSON-RPC username |
 | `KODI_JSONRPC_PASSWORD` | *(blank)* | Kodi JSON-RPC password |
 
+### Optional — storage
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOGSAGA_DB_PATH` | `logsaga.db` | Path to the SQLite database file |
+| `ARTWORK_DIR` | `/config/artwork` | Directory where artwork is cached |
+
+### Optional — TMDB
+
+| Variable | Default | Description |
+|---|---|---|
+| `TMDB_API_KEY` | *(blank = disabled)* | TMDB v3 key or Read Access Token. Enables global search, actor pages, and "Add to History" for items not in your Kodi library. |
+
 ### Optional — behaviour
 
 | Variable | Default | Description |
 |---|---|---|
 | `POLL_SECONDS` | `30` | How often to poll Kodi's database |
 | `LIBRARY_SYNC_HOURS` | `2.0` | How often to run a full library sync |
+| `CAST_SYNC_HOURS` | `24.0` | How often to refresh TMDB cast data |
 | `PUBLIC_BASE_URL` | `http://localhost:8790` | Base URL used in MQTT artwork links |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
 | `PUID` / `PGID` | `99` / `100` | User/group ID the process runs as |
@@ -228,13 +247,18 @@ docker exec logsaga logsaga <command>
 | Command | Description |
 |---|---|
 | `doctor` | Check DB connection, verify grants, report config |
+| `migrate` | Apply pending database migrations |
 | `backfill` | Import existing history from Kodi's playCount/lastPlayed |
 | `backfill-prior-plays` | Create placeholder sessions for pre-tracking plays |
+| `sync` | Run one poll cycle now |
 | `sync-library` | Sync full library (movies, shows, episodes) |
 | `enrich-metadata` | Backfill plot, genres, codec data from Kodi |
 | `fetch-artwork [--concurrency N]` | Download and cache artwork |
+| `migrate-artwork-paths [--dry-run]` | Move artwork to canonical show paths |
 | `rebuild-sessions` | Rebuild all sessions from raw observations |
-| `migrate` | Apply pending database migrations |
+| `enrich-cast [--concurrency N]` | Fetch TMDB cast for items missing actors |
+| `enrich-episode-cast` | Fetch per-episode guest star credits |
+| `enrich-tmdb-ids` | Search TMDB to assign IDs to unmatched items |
 
 ---
 
