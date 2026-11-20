@@ -96,12 +96,18 @@ After `npm run build`, `http://localhost:8000` serves the full app.
 Copy `.env.example` to `.env` and fill in your values.
 The `.env` file is gitignored — never commit it.
 
-Key values to set:
+Key values to set for first run:
 - `KODI_DB_PASSWORD` — password for the `logsaga` MariaDB account
 - `LOGSAGA_DB_PATH` — full path to your SQLite file
 - `ARTWORK_DIR` — full path to your artwork directory
 - `TZ` — your Kodi clients' local timezone (lastPlayed is written in this timezone)
 - `PUBLIC_BASE_URL` — base URL for artwork links in MQTT messages
+
+> **After first run:** all settings can be changed via the **Configuration page**
+> (`/configuration`) without editing `.env`. Values saved there are stored in the
+> `settings` table in SQLite and persist across container restarts. The `.env` /
+> `-e` env vars serve as a fallback for any key not yet saved via the UI — they are
+> never written to by the app.
 
 ## 5. Docker deploy on Unraid
 

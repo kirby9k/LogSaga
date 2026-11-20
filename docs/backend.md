@@ -412,16 +412,21 @@ Full interactive spec available at `/api/docs` (Swagger UI) and `/api/redoc`.
 | POST | `/api/admin/enrich-cast` | Trigger cast enrichment for items missing cast |
 | POST | `/api/admin/enrich-tmdb-ids` | Trigger TMDB ID search for items missing one |
 
-**Configuration** (live-editable; persisted to `app_setting` table)
+**Configuration** (live-editable; persisted to `settings` table in SQLite)
+
+> **Storage model:** values saved via the UI are written to the `settings` table and
+> take effect immediately. On startup, `_load_effective_settings()` merges env vars
+> with any stored DB rows — **DB values always win over env vars**. The `.env` file
+> and Docker `-e` flags are bootstrap-only fallbacks; they are never written to.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/admin/config` | All config sections |
-| PUT | `/api/admin/config/kodi` | Kodi DB connection settings; tests connection and returns result |
-| PUT | `/api/admin/config/jsonrpc` | Kodi JSON-RPC settings; tests connection |
-| PUT | `/api/admin/config/tmdb` | TMDB API key; tests connectivity |
-| PUT | `/api/admin/config/mqtt` | MQTT broker settings; tests connectivity |
-| PUT | `/api/admin/config/app` | App settings (poll interval, log level, etc.) |
+| GET | `/api/admin/config` | All config sections. Credentials returned as `is_set` booleans, never plaintext. |
+| PUT | `/api/admin/config/kodi` | Save Kodi DB settings; tests connection and returns result |
+| PUT | `/api/admin/config/jsonrpc` | Save Kodi JSON-RPC settings; tests connection |
+| PUT | `/api/admin/config/tmdb` | Save TMDB API key; tests with a live API call |
+| PUT | `/api/admin/config/mqtt` | Save MQTT settings; restarts MQTT task; tests connectivity |
+| PUT | `/api/admin/config/app` | Save app settings (public URL, log level, timezone) |
 
 **Backups**
 
