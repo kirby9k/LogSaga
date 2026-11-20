@@ -146,7 +146,12 @@ docker exec logsaga logsaga fetch-artwork --concurrency 10
 
 ## Configuration
 
-All settings are environment variables. Copy `.env.example` to `.env` and set the values you need.
+Settings can be configured two ways:
+
+- **Environment variables / `.env`** — bootstrap and fallback. Required for the initial credentials needed to start the app. Copy `.env.example` to `.env` and fill in the minimum required values before first run.
+- **Configuration page** (`/configuration`) — preferred after first run. Changes are saved to the `settings` table in the SQLite database and take effect immediately without a restart. DB values always override env vars. The `.env` file is never written to by the app.
+
+The tables below document all available env vars and their defaults.
 
 ### Required
 
