@@ -42,7 +42,7 @@ backend/
   migrations/
     env.py                Alembic env — reads LOGSAGA_DB_PATH or LOGSAGA_DB
     versions/             Migration scripts (0001–0009)
-  tests/                  305 tests across 9 modules
+  tests/                  run `uv run pytest` to see count
 ```
 
 ---
@@ -557,7 +557,7 @@ not automatically read when the container starts.
 
 ## Tests
 
-305 tests in `backend/tests/`. Run with `uv run pytest`.
+Run with `uv run pytest` from `backend/`.
 Integration tests (require a live MariaDB container via testcontainers) are in `tests/integration/`.
 
 | Module | Coverage |
