@@ -1,6 +1,6 @@
 # Frontend Reference
 
-Generated: 2026-11-05 · React 19 + TypeScript 7 + Vite 8
+Updated: 2026-11-20 · React 19 + TypeScript 7 + Vite 8
 
 ---
 
@@ -41,7 +41,7 @@ frontend/
     api/
       types.ts             OpenAPI TypeScript types (hand-authored; regenerate with npm run generate-types)
       client.ts            openapi-fetch singleton: createClient<paths>({ baseUrl: '/' })
-      queries.ts           All 8 TanStack Query hooks + rebuild mutation
+      queries.ts           40+ TanStack Query hooks and mutations
     lib/
       utils.ts             cn() helper (clsx + tailwind-merge)
       format.ts            formatRuntime, formatPercent, formatRelative, formatDate,
@@ -83,9 +83,13 @@ frontend/
 
 ## Routes
 
-### `/` — Recently Played
-- Data: `useRecent({ limit: 50, type? })`
-- UI: type toggle (All / Movies / TV) → responsive poster grid; Load More; click → item detail
+### `/` — Dashboard
+- Data: `useRecent`, `useRecentlyAdded`, `useDashboardStats`
+- UI: summary stat cards + recently played strip + recently added strip
+
+### `/recent` — Recently Played
+- Data: `useRecentInfinite` (infinite scroll)
+- UI: date-grouped list — poster + title + status badge + TimeAgo; infinite Load More
 
 ### `/continue` — Continue Watching
 - Data: `useInProgress()` with `refetchInterval: 30_000`
@@ -100,21 +104,60 @@ frontend/
 - UI: filter bar (search debounced 300ms, type, status, date range) + shadcn Table + pagination
 - CSV export: fetches up to 500 rows, builds CSV string, downloads via `URL.createObjectURL`
 
+### `/movies` — Movie Library
+- Data: `useMovies(params)`
+- UI: poster grid — filter (history/all/unwatched), sort, search; click → item detail
+
 ### `/shows` — TV Shows
-- Data: `useShows(search)` debounced
+- Data: `useShows(params)`
 - UI: poster grid — show poster + title + watched/total progress bar + next unwatched label
-- Clicking a show → `/history?search=<show_title>`
+
+### `/shows/$showId` — Show Detail
+- Data: `useShowDetail(showId)`
+- UI: hero backdrop + poster; cast strip (`CastRow`); season list; recently played episode thumbnails
+
+### `/shows/$showId/seasons/$season` — Season Detail
+- Data: `useSeasonDetail(showId, season)`
+- UI: episode grid with watched flags, thumbnails, and session links
+
+### `/items/$itemId` — Item Detail
+- Data: `useItem(Number(itemId))`
+- UI: hero backdrop + poster; cast strip; sessions list with badges; observations in Collapsible
+
+### `/actors/$actorId` — Actor Detail
+- Data: `useActor`, `useActorFilmography`, `useActorRecentSessions`
+- UI: profile photo + bio (lazy fetch) + birthday/birthplace; "Watched History" and "Library" poster grids
 
 ### `/stats` — Statistics
 - Data: `useStats(days)` with days toggle (30 / 90 / 365)
 - UI: 4 summary cards + bar chart (Recharts via shadcn ChartContainer) + top shows table
 - Chart data is gap-filled client-side: full date range generated, API data merged, missing days → 0
 
-### `/items/$itemId` — Item Detail
-- Data: `useItem(Number(itemId))`
-- UI: two-col desktop (poster | info); sessions list with badges; observations in Collapsible (collapsed by default)
+### `/recently-added` — Recently Added
+- Data: `useRecentlyAdded(params)`
+- UI: items sorted by `date_added` DESC; type filter
 
-### `/settings` — Settings / Status
+### `/recently-viewed` — TMDB Browse History
+- Data: `useRecentlyViewed()`
+- UI: items you've browsed on TMDB pages, capped at 50; click → TMDB detail page
+
+### `/tmdb/movie/$tmdbId` — TMDB Movie Detail
+- Data: `useTMDBMovie(tmdbId)`
+- UI: TMDB metadata + local watch status; "Add to History" with 3 date modes (now / release / custom)
+
+### `/tmdb/tv/$tmdbId` — TMDB TV Show Detail
+- Data: `useTMDBTV(tmdbId)`
+- UI: show overview + season list; "Add to History" per episode
+
+### `/tmdb/tv/$tmdbId/season/$season` — TMDB Season Detail
+- Data: `useTMDBSeason(tmdbId, season)`
+- UI: episode list with air dates + "Add to History" per episode
+
+### `/configuration` — Configuration
+- Data: `useAdminConfig`, `useJobs`, `useArtworkStatus`, `useCastStatus`, `useBackupList`
+- UI: tabbed settings panels (Kodi DB, JSON-RPC, TMDB, MQTT, App, Session Rules); job status cards; backup management; artwork/cast coverage stats
+
+### `/settings` — Legacy Status Page
 - Data: `useHealth()` with `refetchInterval: 30_000`
 - UI: Status card + session rules card (read-only) + Rebuild button (`useRebuildSessions` mutation)
 
@@ -129,18 +172,61 @@ import type { paths } from './types'
 export const apiClient = createClient<paths>({ baseUrl: '/' })
 ```
 
-### `src/api/queries.ts` — available hooks
+### `src/api/queries.ts` — available hooks (40+)
 
-| Hook | Endpoint | Notes |
-|------|----------|-------|
-| `useHealth()` | GET /api/health | refetchInterval: 30s |
-| `useRecent(params)` | GET /api/recent | staleTime: 30s |
-| `useSessions(params)` | GET /api/sessions | staleTime: 30s |
-| `useInProgress()` | GET /api/in-progress | refetchInterval: 30s |
-| `useShows(search)` | GET /api/shows | staleTime: 30s |
-| `useItem(id)` | GET /api/items/{id} | staleTime: 30s |
-| `useStats(days)` | GET /api/stats | staleTime: 30s |
-| `useRebuildSessions()` | POST /api/admin/rebuild-sessions | useMutation; invalidates all queries on success |
+**Data hooks**
+
+| Hook | Endpoint |
+|------|----------|
+| `useHealth()` | GET /api/health |
+| `useDashboardStats()` | GET /api/stats/dashboard |
+| `useStats(days)` | GET /api/stats |
+| `useRecent(params)` | GET /api/recent |
+| `useRecentInfinite(params)` | GET /api/recent (infinite scroll) |
+| `useSessions(params)` | GET /api/sessions |
+| `useInProgress()` | GET /api/in-progress |
+| `useMovies(params)` | GET /api/movies |
+| `useShows(params)` | GET /api/shows |
+| `useShowDetail(showId)` | GET /api/shows/{id} |
+| `useSeasonDetail(showId, season)` | GET /api/shows/{id}/seasons/{n} |
+| `useRecentlyAdded(params)` | GET /api/recently-added |
+| `useItem(id)` | GET /api/items/{id} |
+| `useSearch(params)` | GET /api/search |
+| `useRecentlyViewed(limit)` | GET /api/recently-viewed |
+| `useTMDBMovie(tmdbId)` | GET /api/tmdb/movie/{id} |
+| `useTMDBTV(tmdbId)` | GET /api/tmdb/tv/{id} |
+| `useTMDBSeason(tmdbId, season)` | GET /api/tmdb/tv/{id}/season/{n} |
+| `useActor(tmdbPersonId)` | GET /api/actors/{id} |
+| `useActorFilmography(tmdbPersonId)` | GET /api/actors/{id}/filmography |
+| `useActorRecentSessions(tmdbPersonId)` | GET /api/actors/{id}/recent-sessions |
+| `useActorRecommendations(tmdbPersonId)` | GET /api/actors/{id}/recommendations |
+| `useAdminSettings()` | GET /api/admin/settings |
+| `useArtworkStatus()` | GET /api/admin/artwork-status |
+| `useCastStatus()` | GET /api/admin/cast-status |
+| `useJobs()` | GET /api/jobs |
+| `useAdminConfig()` | GET /api/config |
+| `useBackupList()` | GET /api/admin/backups |
+
+**Mutation hooks**
+
+| Hook | Endpoint |
+|------|----------|
+| `useRebuildSessions()` | POST /api/admin/rebuild-sessions |
+| `usePostWatched()` | POST /api/watched |
+| `useHideSession()` | DELETE /api/sessions/{id} |
+| `useTriggerJob(jobName)` | POST /api/admin/fetch-artwork or similar |
+| `useUpdateSettings()` | PUT /api/admin/settings |
+| `useUpdateConfigKodi()` | PUT /api/config/kodi |
+| `useUpdateConfigJSONRPC()` | PUT /api/config/jsonrpc |
+| `useUpdateConfigTMDB()` | PUT /api/config/tmdb |
+| `useUpdateConfigMQTT()` | PUT /api/config/mqtt |
+| `useUpdateConfigApp()` | PUT /api/config/app |
+| `useRecoverMissingArtwork()` | POST /api/admin/recover-missing-artwork |
+| `useRecoverItemArtwork(itemId)` | POST /api/items/{id}/recover-artwork |
+| `useCreateBackup()` | POST /api/admin/backups |
+| `useVerifyBackup()` | POST /api/admin/backups/{name}/verify |
+| `useRestoreBackup()` | POST /api/admin/backups/{name}/restore |
+| `useDeleteBackup()` | DELETE /api/admin/backups/{name} |
 
 ### Regenerating types
 

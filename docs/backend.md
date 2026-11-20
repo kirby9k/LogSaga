@@ -1,6 +1,6 @@
 # Backend Reference
 
-Updated: 2026-11-12 · Covers all phases through Phase 6 (deployed).
+Updated: 2026-11-20 · Covers all phases through Phase 8+ (deployed).
 
 ---
 
@@ -13,11 +13,12 @@ backend/
   alembic.ini             Alembic config (sqlalchemy.url unused — env.py reads env vars)
   logsaga/
     config.py             pydantic-settings — all env vars with defaults
-    models.py             SQLAlchemy 2.x declarative models (7 tables); PRAGMA busy_timeout=30000
+    models.py             SQLAlchemy 2.x declarative models (12 tables); PRAGMA busy_timeout=30000
     main.py               FastAPI app, lifespan, poll loop, library sync loop, MQTT publisher
     cli.py                Typer CLI: doctor, migrate, backfill, backfill-prior-plays,
                           sync, sync-library, enrich-metadata, rebuild-sessions,
-                          fetch-artwork, migrate-artwork-paths  (10 commands)
+                          fetch-artwork, migrate-artwork-paths, enrich-cast,
+                          enrich-episode-cast, enrich-tmdb-ids  (13 commands)
     kodi/
       db.py               Read-only MariaDB access — all 4 code-level protection layers
       jsonrpc.py          Kodi JSON-RPC client (artwork only, allowlisted methods)
@@ -33,15 +34,15 @@ backend/
     library/
       sync.py             Full library sync → kodi_show + media_item (watched + unwatched)
     api/
-      routes.py           FastAPI route handlers (17 endpoints)
+      routes.py           FastAPI route handlers (40+ endpoints)
       schemas.py          Pydantic response models
       deps.py             FastAPI dependency injection (db session, settings)
     mqtt/
       publisher.py        Home Assistant MQTT discovery publisher (8 entities)
   migrations/
     env.py                Alembic env — reads LOGSAGA_DB_PATH or LOGSAGA_DB
-    versions/             Migration scripts (0001–0004)
-  tests/                  211+ tests across 7 modules
+    versions/             Migration scripts (0001–0009)
+  tests/                  305 tests across 9 modules
 ```
 
 ---
@@ -196,8 +197,8 @@ Derived from observations. Can be fully rebuilt with `rebuild-sessions`.
 | runtime_s | INTEGER | Best known runtime at session time |
 | percent | FLOAT | max_position_s / runtime_s × 100 |
 | status | ENUM | `open`, `completed`, `partial`, `ignored` |
-| completion_reason | ENUM | `position`, `kodi_playcount`, `kodi_marked` |
-| source | ENUM | `poll` (live), `backfill` (imported), `backfill_prior` (pre-history placeholder) |
+| completion_reason | ENUM | `position`, `kodi_playcount`, `kodi_marked`, `manual` |
+| source | ENUM | `poll` (live), `backfill` (imported), `backfill_prior` (pre-history placeholder), `manual` (added via POST /api/watched) |
 | device | VARCHAR(100) | Always null — not currently tracked |
 
 `backfill_prior` sessions have `started_at = 1970-01-01` and represent plays that predate
@@ -259,6 +260,59 @@ Single row (id = 1). Health record updated after every poll cycle.
 ### settings (AppSetting)
 Key/value store. Snapshotted at `rebuild-sessions` time so rebuilds are reproducible.
 
+### tmdb_cache
+30-day response cache for TMDB API calls. Avoids redundant lookups during search, manual
+history, and cast population. Added in migration 0005.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | |
+| cache_key | TEXT UNIQUE | `{endpoint}:{id}` or `search:{type}:{year}:{title}` |
+| response_json | TEXT | Full TMDB API response body |
+| fetched_at | DATETIME UTC | Used to compute TTL (30 days) |
+
+### recently_viewed
+Capped at 50 rows. Records TMDB pages visited from the global search / TMDB browse. Added
+in migration 0005.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | |
+| tmdb_id | INTEGER | |
+| media_type | TEXT | `movie` or `tv` |
+| title | TEXT | |
+| poster_path | TEXT | TMDB relative path |
+| viewed_at | DATETIME UTC | Used for ordering; newest kept on overflow |
+
+### person
+TMDB person records. Populated lazily on first item/show detail view or by `enrich-cast`.
+Added in migration 0006.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | = TMDB person ID |
+| name | TEXT | |
+| profile_path | TEXT | TMDB relative path |
+| biography | TEXT | Fetched lazily on actor detail page |
+| birthday / deathday | TEXT | |
+| place_of_birth | TEXT | |
+| imdb_id / tvdb_id | TEXT | Added in migration 0008 |
+| bio_fetched_at | DATETIME UTC | NULL until biography is fetched |
+| cast_refreshed_at | DATETIME UTC | Last time cast was refreshed from TMDB |
+| cast_refresh_attempted_at | DATETIME UTC | For retry backoff (migration 0007) |
+
+### item_cast
+Junction table linking media items to cast members. Added in migration 0006.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | |
+| media_item_id | INTEGER FK | → media_item.id |
+| show_id | INTEGER FK | → kodi_show.id (for show-level cast) |
+| person_id | INTEGER FK | → person.id |
+| character | TEXT | Character name |
+| order | INTEGER | Billing order |
+
 ---
 
 ## Session rules
@@ -289,26 +343,92 @@ Configured via env vars. Confirmed values as of 2026-11-04 — locked in.
 ## API endpoints
 
 Base path: `/api`. OpenAPI docs at `/api/docs`. All responses are JSON.
+Full interactive spec available at `/api/docs` (Swagger UI) and `/api/redoc`.
+
+**Core / health**
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Sync status, DB name, counters, active rule settings |
+| GET | `/api/stats` | Aggregated stats. Param: `days` (1–365, default 30) |
+| GET | `/api/stats/dashboard` | Dashboard summary stats (total items, sessions, hours) |
+| GET | `/api/jobs` | Background job state: running flag, last run, last result per job |
+
+**History**
+
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/api/recent` | Recent sessions, newest first. Params: `limit`, `offset`, `type`, `status` |
 | GET | `/api/sessions` | Full history. Same params plus `search`, `date_from`, `date_to` |
 | DELETE | `/api/sessions/{id}` | Hard-delete a session (204) |
 | GET | `/api/in-progress` | Items with active Kodi resume points |
+| POST | `/api/watched` | Manually add a watch session. Body: `PostWatchedIn`. Creates `MediaItem` stub for TMDB-only items. |
+
+**Library**
+
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/api/movies` | Movie library grid. Params: `filter` (history/all/unwatched), `sort`, `search`, `limit`, `offset` |
 | GET | `/api/shows` | TV show grid. Params: `filter`, `sort`, `search` |
 | GET | `/api/shows/{show_id}` | Show detail: metadata, all seasons, all episodes, watched flags |
 | GET | `/api/shows/{show_id}/seasons/{season}` | Season detail: episode list with watched flags |
 | GET | `/api/recently-added` | Items by `date_added` DESC. Params: `type`, `limit`, `offset` |
 | GET | `/api/items/{id}` | Full item detail: metadata, all sessions, all observations, all artwork |
-| GET | `/api/stats` | Aggregated stats. Param: `days` (1–365, default 30) |
-| GET | `/api/admin/artwork-status` | Artwork progress: total_items, items_with_artwork, total_artwork_rows, pending |
+| GET | `/api/items/{id}/artwork` | Artwork rows for one item |
+| POST | `/api/items/{id}/recover-artwork` | Force re-fetch artwork for one item (rate-limited 10 min) |
+| GET | `/api/search` | Search local library + TMDB. Params: `q`, `type`, `limit` |
+| GET | `/api/recently-viewed` | TMDB browse history (capped at 50). Param: `limit` |
+
+**Actors / cast**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/actors/{tmdb_person_id}` | Actor detail: bio, watched history, library grid |
+| GET | `/api/actors/{tmdb_person_id}/filmography` | Full filmography with watch status |
+| GET | `/api/actors/{tmdb_person_id}/recent-sessions` | 5 most-recent sessions for items featuring this actor |
+| GET | `/api/actors/{tmdb_person_id}/recommendations` | Actor-based recommendations |
+
+**TMDB proxies** (cached; use `tmdb_cache`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tmdb/movie/{tmdb_id}` | TMDB movie detail + local watch status |
+| GET | `/api/tmdb/tv/{tmdb_id}` | TMDB TV show detail + local watch status |
+| GET | `/api/tmdb/tv/{tmdb_id}/season/{season}` | TMDB season detail + local watch status per episode |
+
+**Admin / maintenance**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/admin/artwork-status` | Artwork progress: total_items, items_with_artwork, pending |
 | POST | `/api/admin/fetch-artwork` | Trigger artwork fetch (fire-and-forget) |
+| POST | `/api/admin/recover-missing-artwork` | Re-fetch artwork for all items missing local files |
+| GET | `/api/admin/cast-status` | Cast coverage: items with/without cast entries |
 | GET | `/api/admin/settings` | Current session rule values from AppSetting |
 | PUT | `/api/admin/settings` | Update session rule values |
 | POST | `/api/admin/rebuild-sessions` | Rebuild all sessions from observations. Runs in thread pool. |
+
+**Configuration** (live-editable; persisted to env/`.env`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/config` | All config sections |
+| GET/PUT | `/api/config/kodi` | Kodi DB connection settings |
+| GET/PUT | `/api/config/jsonrpc` | Kodi JSON-RPC settings |
+| GET/PUT | `/api/config/tmdb` | TMDB API key |
+| GET/PUT | `/api/config/mqtt` | MQTT broker settings |
+| GET/PUT | `/api/config/app` | App settings (poll interval, artwork dir, etc.) |
+| POST | `/api/config/test-connection` | Test Kodi DB + JSON-RPC connectivity |
+
+**Backups**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/admin/backups` | List backups |
+| POST | `/api/admin/backups` | Create a backup |
+| POST | `/api/admin/backups/{name}/verify` | Verify backup integrity |
+| POST | `/api/admin/backups/{name}/restore` | Restore from backup |
+| DELETE | `/api/admin/backups/{name}` | Delete a backup |
 
 Artwork is served at `/art/<local_path>` (FastAPI `StaticFiles` mounted on `ARTWORK_DIR`).
 The SPA is served by a catch-all route returning `index.html` for all non-API, non-asset paths.
@@ -343,6 +463,7 @@ All vars with defaults are optional. See `logsaga/config.py`.
 | `KODI_JSONRPC_USER` / `_PASSWORD` | *(blank)* | |
 | `POLL_SECONDS` | `30` | Poll interval |
 | `LIBRARY_SYNC_HOURS` | `2.0` | Full library sync interval |
+| `CAST_SYNC_HOURS` | `24.0` | Periodic cast sync interval |
 | `TZ` | `America/Los_Angeles` | Must match Kodi client timezone (lastPlayed is local time) |
 | `LOGSAGA_DB_PATH` | `logsaga.db` | SQLite file path |
 | `ARTWORK_DIR` | `/config/artwork` | Where artwork files are stored |
@@ -368,14 +489,17 @@ not automatically read when the container starts.
 
 ## Tests
 
-211+ tests in `backend/tests/`. Run with `uv run pytest`.
+305 tests in `backend/tests/`. Run with `uv run pytest`.
+Integration tests (require a live MariaDB container via testcontainers) are in `tests/integration/`.
 
 | Module | Coverage |
 |--------|----------|
-| `test_kodi_db_protection.py` | All 4 code-level protection layers; grant check, read-only session, SQL guard, static analysis scan |
-| `test_session_rules.py` | All session rule scenarios: crash/resume, stop at 50%, watch to end, mark watched, rewatch, etc. |
-| `test_sessions_builder.py` | DB-level builder with scripted observation timelines |
+| `test_protection.py` | All 4 code-level Kodi DB protection layers; grant check, read-only session, SQL guard, static analysis scan |
+| `test_rules.py` | All session rule scenarios: crash/resume, stop at 50%, watch to end, mark watched, rewatch, percent fix, etc. |
+| `test_backfill.py` | DB-level builder: rebuild_for_item, rebuild_all, build_incremental; non-poll session preservation |
 | `test_poller.py` | Poller diff logic; all 7 observation kinds; history preservation regression tests |
-| `test_artwork_cache.py` | Artwork fetch, skip-if-exists, thumbnail creation, art type allowlist, show path dedup |
-| `test_api.py` | All API endpoints, health status logic, rebuild endpoint, filter params |
-| `test_library_sync.py` | Library sync, kodi_show upsert, media_item dedup, show state aggregation |
+| `test_artwork.py` | Artwork fetch, skip-if-exists, thumbnail creation, art type allowlist, show path dedup |
+| `test_api.py` | Core API endpoints, health status logic, rebuild endpoint, filter params, session delete |
+| `test_manual.py` | POST /api/watched: MediaItem creation, TMDB-only stubs, dedup, artwork trigger |
+| `test_cast.py` | Cast population, INSERT OR IGNORE dedup, show detail last_session_at, actor detail |
+| `test_actor_detail.py` | GET /api/actors/{id}: filmography grouping, watched/library grids |
